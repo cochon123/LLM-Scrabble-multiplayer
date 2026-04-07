@@ -1,11 +1,13 @@
 import { nanoid } from "nanoid";
 import type { Server, Socket } from "socket.io";
 import { BOARD_SIZE, getBonus } from "../shared/constants.js";
+import { DEFAULT_AGENT_SYSTEM_PROMPT } from "../shared/agent-prompt.js";
 import { Dictionary } from "../shared/dictionary.js";
 import { ScrabbleGame } from "../shared/game.js";
-import { DEFAULT_AGENT_SYSTEM_PROMPT } from "../shared/agent-prompt.js";
 import type {
   AgentTrace,
+  AgentTraceChunk,
+  AgentTraceDelta,
   AgentTraceEvent,
   ChatMessage,
   ClientToServerEvents,
@@ -14,17 +16,22 @@ import type {
   JoinRoomPayload,
   PlayerSeat,
   RoomOptions,
+  RoomStatus,
+  RoomSummary,
   RoomView,
   SendChatPayload,
   ServerToClientEvents,
   StartGamePayload,
   SubmitMovePayload,
+  TogglePausePayload,
   TurnLog,
   UpdateRoomOptionsPayload,
-  UpdateSeatPayload
+  UpdateSeatPayload,
+  ViewerRole,
+  WatchRoomPayload
 } from "../shared/types.js";
-import { runAgentTurn, warmUpAgentProvider } from "./ai.js";
 import { appendRoomLog, getRoomLogPath } from "./logger.js";
+import { runAgentTurn, warmUpAgentProvider } from "./ai.js";
 
 type ClientSocket = Socket<ClientToServerEvents, ServerToClientEvents>;
 type ConversationMessage = { role: "system" | "user" | "assistant"; content: string };
@@ -36,6 +43,20 @@ interface ClientRecord {
   roomId?: string;
 }
 
+interface PublicTimelineEntry {
+  id: string;
+  kind: "chat" | "move" | "status";
+  text: string;
+  createdAt: number;
+}
+
+interface AgentConversationState {
+  messages: ConversationMessage[];
+  initialized: boolean;
+  lastPublicEventIndex: number;
+  knownBoard: string[][] | null;
+}
+
 interface RoomState {
   id: string;
   hostClientId: string;
@@ -45,9 +66,15 @@ interface RoomState {
   chat: ChatMessage[];
   logs: TurnLog[];
   agentTraces: Record<string, AgentTrace>;
-  agentConversations: Record<string, ConversationMessage[]>;
+  agentStates: Record<string, AgentConversationState>;
   agentRunning: boolean;
   finishedLogged: boolean;
+  paused: boolean;
+  pauseRequestedByClientId?: string | null;
+  agentAbortController: AbortController | null;
+  spectatorClientIds: Set<string>;
+  publicTimeline: PublicTimelineEntry[];
+  updatedAt: number;
 }
 
 export class RoomManager {
@@ -72,47 +99,88 @@ export class RoomManager {
     this.clients.set(clientId, client);
 
     if (client.roomId) {
-      socket.join(client.roomId);
       const room = this.rooms.get(client.roomId);
       if (room) {
-        room.seats.forEach((seat) => {
-          if (seat.ownerClientId === clientId) {
-            seat.connected = true;
-            if (!room.game) {
-              seat.name = displayName;
-            }
-          }
-        });
+        socket.join(room.id);
+        if (this.getRoomPlayerId(room, clientId)) {
+          this.markPlayerConnection(room, clientId, true, client.displayName);
+        } else {
+          room.spectatorClientIds.add(clientId);
+        }
+        this.touchRoom(room);
         this.syncRoom(room.id);
+      } else {
+        client.roomId = undefined;
       }
     }
 
-    socket.on("create_room", (payload: CreateRoomPayload) => this.handleCreateRoom(socket, clientId, payload));
-    socket.on("join_room", (payload: JoinRoomPayload) => this.handleJoinRoom(socket, clientId, payload));
-    socket.on("update_room_options", (payload: UpdateRoomOptionsPayload) => this.handleUpdateRoomOptions(clientId, payload));
-    socket.on("update_seat", (payload: UpdateSeatPayload) => this.handleUpdateSeat(clientId, payload));
-    socket.on("start_game", (payload: StartGamePayload) => this.handleStartGame(clientId, payload));
-    socket.on("submit_move", (payload: SubmitMovePayload) => this.handleSubmitMove(clientId, payload));
-    socket.on("exchange_tiles", (payload: ExchangeTilesPayload) => this.handleExchangeTiles(clientId, payload));
-    socket.on("pass_turn", (payload: { roomId: string }) => this.handlePassTurn(clientId, payload.roomId));
-    socket.on("send_chat", (payload: SendChatPayload) => this.handleSendChat(clientId, payload));
-    socket.on("get_legal_moves", (payload: { roomId: string }) => this.handleGetLegalMoves(clientId, payload.roomId));
+    socket.on("create_room", (payload) => this.handleCreateRoom(socket, clientId, payload));
+    socket.on("leave_room", () => this.handleLeaveRoom(socket, clientId));
+    socket.on("watch_room", (payload) => this.handleWatchRoom(socket, clientId, payload));
+    socket.on("join_room", (payload) => this.handleJoinRoom(socket, clientId, payload));
+    socket.on("update_room_options", (payload) => this.handleUpdateRoomOptions(clientId, payload));
+    socket.on("update_seat", (payload) => this.handleUpdateSeat(clientId, payload));
+    socket.on("start_game", (payload) => this.handleStartGame(clientId, payload));
+    socket.on("submit_move", (payload) => this.handleSubmitMove(clientId, payload));
+    socket.on("exchange_tiles", (payload) => this.handleExchangeTiles(clientId, payload));
+    socket.on("pass_turn", (payload) => this.handlePassTurn(clientId, payload.roomId));
+    socket.on("send_chat", (payload) => this.handleSendChat(clientId, payload));
+    socket.on("get_legal_moves", (payload) => this.handleGetLegalMoves(clientId, payload.roomId));
+    socket.on("toggle_pause", (payload) => this.handleTogglePause(clientId, payload));
 
     socket.on("disconnect", () => {
       const disconnectedClient = this.clients.get(clientId);
-      if (disconnectedClient) {
-        disconnectedClient.socketId = "";
+      if (!disconnectedClient) {
+        return;
       }
-      const room = disconnectedClient?.roomId ? this.rooms.get(disconnectedClient.roomId) : undefined;
-      if (room) {
-        room.seats.forEach((seat) => {
-          if (seat.ownerClientId === clientId) {
-            seat.connected = false;
-          }
-        });
-        this.syncRoom(room.id);
+      disconnectedClient.socketId = "";
+      if (!disconnectedClient.roomId) {
+        return;
       }
+      const room = this.rooms.get(disconnectedClient.roomId);
+      if (!room) {
+        return;
+      }
+      if (this.getRoomPlayerId(room, clientId)) {
+        this.markPlayerConnection(room, clientId, false);
+      } else {
+        room.spectatorClientIds.delete(clientId);
+      }
+      this.touchRoom(room);
+      this.syncRoom(room.id);
     });
+  }
+
+  listRoomSummaries(): RoomSummary[] {
+    return [...this.rooms.values()]
+      .map((room) => this.buildRoomSummary(room))
+      .sort((left, right) => right.updatedAt - left.updatedAt);
+  }
+
+  getRoomViewSnapshot(roomId: string, clientId?: string | null): RoomView | null {
+    const room = this.rooms.get(roomId);
+    if (!room) {
+      return null;
+    }
+    return this.buildRoomView(room, clientId ?? "");
+  }
+
+  private handleLeaveRoom(socket: ClientSocket, clientId: string): void {
+    const client = this.clients.get(clientId);
+    if (!client?.roomId) {
+      return;
+    }
+
+    const room = this.rooms.get(client.roomId);
+    if (room) {
+      room.spectatorClientIds.delete(clientId);
+      this.markPlayerConnection(room, clientId, false);
+      this.touchRoom(room);
+      this.syncRoom(room.id);
+      socket.leave(room.id);
+    }
+
+    client.roomId = undefined;
   }
 
   private handleCreateRoom(socket: ClientSocket, clientId: string, payload: CreateRoomPayload): void {
@@ -125,20 +193,6 @@ export class RoomManager {
     client.socketId = socket.id;
 
     const roomId = nanoid(8);
-    const hostSeat = createSeat(0, {
-      enabled: true,
-      kind: "human",
-      name: client.displayName,
-      ownerClientId: clientId,
-      connected: true
-    });
-    const agentSeat = createSeat(1, {
-      enabled: true,
-      kind: "agent",
-      name: "Agent Local",
-      connected: true,
-      agentConfig: defaultAgentConfig()
-    });
     const room: RoomState = {
       id: roomId,
       hostClientId: clientId,
@@ -146,24 +200,40 @@ export class RoomManager {
         showLegalMoves: false
       },
       seats: [
-        hostSeat,
-        agentSeat,
+        createSeat(0, {
+          enabled: true,
+          kind: "human",
+          name: client.displayName,
+          ownerClientId: clientId,
+          connected: true
+        }),
+        createSeat(1, {
+          enabled: true,
+          kind: "agent",
+          name: "Agent Local",
+          connected: true,
+          agentConfig: defaultAgentConfig()
+        }),
         createSeat(2, { enabled: false, kind: "human", name: "Joueur 3" }),
         createSeat(3, { enabled: false, kind: "human", name: "Joueur 4" })
       ],
-      chat: [
-        systemChat("Salon créé. Configure les sièges puis lance la partie.")
-      ],
+      chat: [systemChat("Salon créé. Configure les sièges puis lance la partie.")],
       logs: [],
       agentTraces: {},
-      agentConversations: {},
+      agentStates: {},
       agentRunning: false,
-      finishedLogged: false
+      finishedLogged: false,
+      paused: false,
+      pauseRequestedByClientId: null,
+      agentAbortController: null,
+      spectatorClientIds: new Set<string>(),
+      publicTimeline: [],
+      updatedAt: Date.now()
     };
 
     this.rooms.set(roomId, room);
-    client.roomId = roomId;
-    socket.join(roomId);
+    this.moveClientToRoom(socket, client, roomId);
+    this.pushPublicTimeline(room, "status", "Salon créé.");
     this.logRoomEvent(room, "room_created", {
       hostClientId: clientId,
       hostName: client.displayName,
@@ -172,6 +242,70 @@ export class RoomManager {
       options: room.options
     });
     this.syncRoom(roomId);
+  }
+
+  private handleWatchRoom(socket: ClientSocket, clientId: string, payload: WatchRoomPayload): void {
+    const room = this.rooms.get(payload.roomId);
+    const client = this.clients.get(clientId);
+    if (!room || !client) {
+      socket.emit("error_message", "Salon introuvable.");
+      return;
+    }
+
+    const nextName = payload.displayName?.trim();
+    if (nextName) {
+      client.displayName = nextName;
+    }
+    client.socketId = socket.id;
+    this.moveClientToRoom(socket, client, room.id);
+    if (this.getRoomPlayerId(room, clientId)) {
+      this.markPlayerConnection(room, clientId, true, client.displayName);
+    } else {
+      room.spectatorClientIds.add(clientId);
+    }
+    this.touchRoom(room);
+    this.syncRoom(room.id);
+  }
+
+  private handleJoinRoom(socket: ClientSocket, clientId: string, payload: JoinRoomPayload): void {
+    const room = this.rooms.get(payload.roomId);
+    const client = this.clients.get(clientId);
+    if (!room || !client) {
+      socket.emit("error_message", "Salon introuvable.");
+      return;
+    }
+
+    client.displayName = payload.displayName.trim() || client.displayName;
+    client.socketId = socket.id;
+    this.moveClientToRoom(socket, client, room.id);
+
+    const existingSeat = room.seats.find((seat) => seat.ownerClientId === clientId);
+    if (existingSeat) {
+      existingSeat.connected = true;
+      existingSeat.name = client.displayName;
+    } else {
+      const seat = room.seats.find((entry) => entry.enabled && entry.kind === "human" && !entry.ownerClientId);
+      if (!seat) {
+        socket.emit("error_message", "Aucun siège joueur humain n'est disponible dans ce salon.");
+        room.spectatorClientIds.add(clientId);
+        this.syncRoom(room.id);
+        return;
+      }
+      seat.ownerClientId = clientId;
+      seat.connected = true;
+      seat.name = client.displayName;
+    }
+
+    room.spectatorClientIds.delete(clientId);
+    room.chat.push(systemChat(`${client.displayName} a rejoint la partie comme joueur.`));
+    this.pushPublicTimeline(room, "status", `${client.displayName} rejoint la partie comme joueur.`);
+    this.logRoomEvent(room, "player_joined", {
+      clientId,
+      displayName: client.displayName,
+      seats: summarizeSeats(room.seats)
+    });
+    this.touchRoom(room);
+    this.syncRoom(room.id);
   }
 
   private handleUpdateRoomOptions(clientId: string, payload: UpdateRoomOptionsPayload): void {
@@ -188,56 +322,11 @@ export class RoomManager {
       return;
     }
 
-    room.options = {
-      ...room.options,
-      ...payload.patch
-    };
+    room.options = { ...room.options, ...payload.patch };
+    this.touchRoom(room);
     this.logRoomEvent(room, "room_options_updated", {
       updatedBy: clientId,
       options: room.options
-    });
-    this.syncRoom(room.id);
-  }
-
-  private handleJoinRoom(socket: ClientSocket, clientId: string, payload: JoinRoomPayload): void {
-    const room = this.rooms.get(payload.roomId);
-    const client = this.clients.get(clientId);
-    if (!room || !client) {
-      socket.emit("error_message", "Salon introuvable.");
-      return;
-    }
-
-    client.displayName = payload.displayName.trim() || client.displayName;
-    client.socketId = socket.id;
-    client.roomId = room.id;
-    socket.join(room.id);
-
-    const existingSeat = room.seats.find((seat) => seat.ownerClientId === clientId);
-    if (existingSeat) {
-      existingSeat.connected = true;
-      if (!room.game) {
-        existingSeat.name = client.displayName;
-      }
-    } else {
-      const seat =
-        room.seats.find((entry) => entry.enabled && entry.kind === "human" && !entry.ownerClientId) ??
-        room.seats.find((entry) => !entry.enabled && entry.kind === "human");
-      if (seat) {
-        seat.enabled = true;
-        seat.ownerClientId = clientId;
-        seat.connected = true;
-        seat.name = client.displayName;
-      } else {
-        socket.emit("error_message", "Salon complet.");
-        return;
-      }
-    }
-
-    room.chat.push(systemChat(`${client.displayName} a rejoint le salon.`));
-    this.logRoomEvent(room, "player_joined", {
-      clientId,
-      displayName: client.displayName,
-      seats: summarizeSeats(room.seats)
     });
     this.syncRoom(room.id);
   }
@@ -260,6 +349,8 @@ export class RoomManager {
     if (!seat) {
       return;
     }
+
+    const priorOwnerClientId = seat.ownerClientId ?? null;
 
     if (typeof payload.patch.enabled === "boolean") {
       seat.enabled = payload.patch.enabled;
@@ -296,9 +387,18 @@ export class RoomManager {
         seat.ownerClientId = availableClient.clientId;
         seat.connected = availableClient.socketId !== "";
         seat.name = availableClient.displayName;
+        room.spectatorClientIds.delete(availableClient.clientId);
       }
     }
 
+    if (priorOwnerClientId && priorOwnerClientId !== seat.ownerClientId) {
+      const displacedClient = this.clients.get(priorOwnerClientId);
+      if (displacedClient?.roomId === room.id) {
+        room.spectatorClientIds.add(priorOwnerClientId);
+      }
+    }
+
+    this.touchRoom(room);
     this.logRoomEvent(room, "seat_updated", {
       updatedBy: clientId,
       seatId: seat.id,
@@ -333,6 +433,11 @@ export class RoomManager {
     room.game.start();
     room.chat.push(systemChat("La partie commence."));
     room.finishedLogged = false;
+    room.paused = false;
+    room.agentAbortController = null;
+    room.agentStates = {};
+    room.publicTimeline = [];
+    this.pushPublicTimeline(room, "status", "La partie commence.");
     this.logRoomEvent(room, "game_started", {
       seats: summarizeSeats(activeSeats),
       firstPlayerId: room.game.getCurrentPlayer()?.id ?? null,
@@ -341,6 +446,7 @@ export class RoomManager {
     for (const seat of activeSeats.filter((entry) => entry.kind === "agent")) {
       void warmUpAgentProvider(seat.agentConfig);
     }
+    this.touchRoom(room);
     this.syncRoom(room.id);
     void this.runAgentIfNeeded(room.id);
   }
@@ -349,6 +455,9 @@ export class RoomManager {
     const room = this.rooms.get(payload.roomId);
     const playerId = room ? this.getRoomPlayerId(room, clientId) : null;
     if (!room || !room.game || !playerId) {
+      return;
+    }
+    if (this.rejectIfPaused(room, clientId)) {
       return;
     }
 
@@ -364,6 +473,8 @@ export class RoomManager {
     }
 
     room.logs.push(result.move);
+    this.pushPublicTimeline(room, "move", `${result.move.playerName}: ${result.move.summary}`);
+    this.touchRoom(room);
     this.logRoomEvent(room, "human_move_applied", {
       playerId,
       move: result.move,
@@ -380,6 +491,9 @@ export class RoomManager {
     if (!room || !room.game || !playerId) {
       return;
     }
+    if (this.rejectIfPaused(room, clientId)) {
+      return;
+    }
 
     const result = room.game.exchangeTiles(playerId, payload.tileIds);
     if (!result.ok) {
@@ -393,6 +507,8 @@ export class RoomManager {
     }
 
     room.logs.push(result.move);
+    this.pushPublicTimeline(room, "move", `${result.move.playerName}: ${result.move.summary}`);
+    this.touchRoom(room);
     this.logRoomEvent(room, "human_exchange_applied", {
       playerId,
       move: result.move,
@@ -409,6 +525,9 @@ export class RoomManager {
     if (!room || !room.game || !playerId) {
       return;
     }
+    if (this.rejectIfPaused(room, clientId)) {
+      return;
+    }
 
     const result = room.game.pass(playerId);
     if (!result.ok) {
@@ -421,6 +540,8 @@ export class RoomManager {
     }
 
     room.logs.push(result.move);
+    this.pushPublicTimeline(room, "move", `${result.move.playerName}: ${result.move.summary}`);
+    this.touchRoom(room);
     this.logRoomEvent(room, "human_pass_applied", {
       playerId,
       move: result.move,
@@ -433,27 +554,32 @@ export class RoomManager {
 
   private handleSendChat(clientId: string, payload: SendChatPayload): void {
     const room = this.rooms.get(payload.roomId);
-    if (!room) {
-      return;
-    }
-
     const client = this.clients.get(clientId);
-    if (!client) {
+    if (!room || !client) {
       return;
     }
 
+    const trimmedText = payload.text.trim();
+    if (!trimmedText) {
+      return;
+    }
+
+    const kind: ChatMessage["kind"] = this.getRoomPlayerId(room, clientId) ? "human" : "spectator";
     room.chat.push({
       id: nanoid(),
       authorId: clientId,
       authorName: client.displayName,
-      kind: "human",
-      text: payload.text.trim(),
+      kind,
+      text: trimmedText,
       createdAt: Date.now()
     });
+    this.pushPublicTimeline(room, "chat", `${client.displayName}: ${trimmedText}`);
+    this.touchRoom(room);
     this.logRoomEvent(room, "human_chat", {
       clientId,
       authorName: client.displayName,
-      text: payload.text.trim()
+      text: trimmedText,
+      kind
     });
     this.syncRoom(room.id);
   }
@@ -463,6 +589,10 @@ export class RoomManager {
     const playerId = room ? this.getRoomPlayerId(room, clientId) : null;
     const client = this.clients.get(clientId);
     if (!room || !room.game || !playerId || !client?.socketId) {
+      return;
+    }
+    if (room.paused) {
+      this.emitToClient(clientId, "error_message", "La partie est en pause.");
       return;
     }
     if (!room.options.showLegalMoves) {
@@ -481,9 +611,41 @@ export class RoomManager {
     this.io.to(client.socketId).emit("legal_moves", moves);
   }
 
+  private handleTogglePause(clientId: string, payload: TogglePausePayload): void {
+    const room = this.rooms.get(payload.roomId);
+    if (!room?.game || room.hostClientId !== clientId) {
+      if (room) {
+        this.emitToClient(clientId, "error_message", "Seul l'hôte peut mettre la partie en pause.");
+      }
+      return;
+    }
+    if (room.game.isFinished()) {
+      return;
+    }
+
+    room.paused = !room.paused;
+    room.pauseRequestedByClientId = clientId;
+    this.pushPublicTimeline(room, "status", room.paused ? "Partie mise en pause." : "Partie reprise.");
+    this.touchRoom(room);
+    this.logRoomEvent(room, room.paused ? "game_paused" : "game_resumed", {
+      requestedBy: clientId
+    });
+    if (room.paused) {
+      room.agentAbortController?.abort("room_paused");
+    }
+    this.io.to(room.id).emit("room_pause_state", {
+      roomId: room.id,
+      paused: room.paused
+    });
+    this.syncRoom(room.id);
+    if (!room.paused) {
+      void this.runAgentIfNeeded(room.id);
+    }
+  }
+
   private async runAgentIfNeeded(roomId: string): Promise<void> {
     const room = this.rooms.get(roomId);
-    if (!room || !room.game || room.agentRunning || room.game.isFinished()) {
+    if (!room || !room.game || room.agentRunning || room.game.isFinished() || room.paused) {
       return;
     }
     const currentPlayer = room.game.getCurrentPlayer();
@@ -492,6 +654,7 @@ export class RoomManager {
     }
 
     room.agentRunning = true;
+    room.agentAbortController = new AbortController();
     this.logRoomEvent(room, "agent_turn_started", {
       playerId: currentPlayer.id,
       playerName: currentPlayer.name,
@@ -500,78 +663,50 @@ export class RoomManager {
       allowLegalMoves: Boolean(currentPlayer.agentConfig?.allowLegalMoves),
       rack: currentPlayer.rack.map((tile) => (tile.blank ? "?" : tile.letter))
     });
-    await new Promise((resolve) => setTimeout(resolve, 700));
+    await new Promise((resolve) => setTimeout(resolve, 350));
 
     try {
       const result = await runAgentTurn(currentPlayer.id, currentPlayer.agentConfig, {
         roomId,
         game: room.game,
-        recentChat: room.chat,
-        logs: room.logs,
-        pushChat: (playerId: string, text: string) => this.pushAgentChat(room, playerId, text),
-        beginTrace: (trace: AgentTrace) => {
-          const existing = room.agentTraces[trace.playerId];
-          room.agentTraces[trace.playerId] = existing
-            ? {
-                ...existing,
-                playerName: trace.playerName,
-                provider: trace.provider,
-                model: trace.model,
-                systemPrompt: trace.systemPrompt,
-                updatedAt: trace.updatedAt,
-                events:
-                  existing.systemPrompt === trace.systemPrompt
-                    ? existing.events
-                    : [...existing.events, ...trace.events].slice(-240)
-              }
-            : trace;
-          this.logRoomEvent(room, "agent_trace_started", {
-            playerId: trace.playerId,
-            playerName: trace.playerName,
-            provider: trace.provider,
-            model: trace.model,
-            systemPrompt: trace.systemPrompt
-          });
-          for (const event of trace.events) {
-            this.logRoomEvent(room, "agent_trace_event", {
-              playerId: trace.playerId,
-              playerName: trace.playerName,
-              eventKind: event.kind,
-              title: event.title,
-              content: event.content
-            });
-          }
-        },
-        pushTraceEvent: (playerId: string, event: AgentTraceEvent) => {
-          const existing = room.agentTraces[playerId];
-          if (!existing) {
-            return;
-          }
-          existing.events = [...existing.events, event].slice(-240);
-          existing.updatedAt = event.createdAt;
-          this.logRoomEvent(room, "agent_trace_event", {
-            playerId,
-            playerName: existing.playerName,
-            eventKind: event.kind,
-            title: event.title,
-            content: event.content
-          });
-        },
-        getConversation: (playerId: string) => room.agentConversations[playerId] ?? [],
-        setConversation: (playerId: string, messages: ConversationMessage[]) => {
-          room.agentConversations[playerId] = messages.slice(-240);
+        signal: room.agentAbortController.signal,
+        isPaused: () => room.paused,
+        getPublicTimeline: () => room.publicTimeline,
+        pushChat: (playerId, text) => this.pushAgentChat(room, playerId, text),
+        beginTrace: (trace) => this.beginTrace(room, trace),
+        pushTraceEvent: (playerId, event) => this.pushTraceEvent(room, playerId, event),
+        startTraceEvent: (playerId, event) => this.startTraceEvent(room, playerId, event),
+        appendTraceChunk: (payload) => this.appendTraceChunk(room, payload),
+        getAgentState: (playerId) =>
+          room.agentStates[playerId] ?? {
+            messages: [],
+            initialized: false,
+            lastPublicEventIndex: 0,
+            knownBoard: null
+          },
+        setAgentState: (playerId, state) => {
+          room.agentStates[playerId] = {
+            messages: state.messages.slice(-240),
+            initialized: state.initialized,
+            lastPublicEventIndex: state.lastPublicEventIndex,
+            knownBoard: state.knownBoard?.map((row) => [...row]) ?? null
+          };
         }
       });
+
       const snapshot = room.game.getSnapshot();
       this.logRoomEvent(room, "agent_turn_completed", {
         playerId: currentPlayer.id,
         playerName: currentPlayer.name,
         done: result.done,
         summary: result.summary,
+        aborted: Boolean(result.aborted),
         nextPlayerId: snapshot.currentPlayerId
       });
+
       if (result.done && snapshot.lastMove) {
         room.logs.push(snapshot.lastMove);
+        this.pushPublicTimeline(room, "move", `${snapshot.lastMove.playerName}: ${snapshot.lastMove.summary}`);
         this.logRoomEvent(room, "agent_move_applied", {
           playerId: currentPlayer.id,
           move: snapshot.lastMove,
@@ -581,10 +716,117 @@ export class RoomManager {
       this.logGameFinishedIfNeeded(room);
     } finally {
       room.agentRunning = false;
+      room.agentAbortController = null;
+      this.touchRoom(room);
       this.syncRoom(roomId);
-      if (room.game && !room.game.isFinished()) {
+      if (room.game && !room.game.isFinished() && !room.paused) {
         void this.runAgentIfNeeded(roomId);
       }
+    }
+  }
+
+  private beginTrace(room: RoomState, trace: AgentTrace): void {
+    const existing = room.agentTraces[trace.playerId];
+    room.agentTraces[trace.playerId] = existing
+      ? {
+          ...existing,
+          playerName: trace.playerName,
+          provider: trace.provider,
+          model: trace.model,
+          systemPrompt: trace.systemPrompt,
+          updatedAt: trace.updatedAt,
+          events: trace.events.length > 0 ? [...existing.events, ...trace.events].slice(-320) : existing.events
+        }
+      : {
+          ...trace,
+          events: trace.events.slice(-320)
+        };
+
+    this.logRoomEvent(room, "agent_trace_started", {
+      playerId: trace.playerId,
+      playerName: trace.playerName,
+      provider: trace.provider,
+      model: trace.model,
+      systemPrompt: trace.systemPrompt
+    });
+
+    for (const event of trace.events) {
+      this.logRoomEvent(room, "agent_trace_event", {
+        playerId: trace.playerId,
+        playerName: trace.playerName,
+        eventKind: event.kind,
+        title: event.title,
+        content: event.content
+      });
+      this.io.to(room.id).emit("agent_trace_delta", {
+        playerId: trace.playerId,
+        event
+      });
+    }
+    this.syncRoom(room.id);
+  }
+
+  private pushTraceEvent(room: RoomState, playerId: string, event: AgentTraceEvent): void {
+    const trace = room.agentTraces[playerId];
+    if (!trace) {
+      return;
+    }
+    trace.events = [...trace.events, event].slice(-320);
+    trace.updatedAt = event.createdAt;
+    this.logRoomEvent(room, "agent_trace_event", {
+      playerId,
+      playerName: trace.playerName,
+      eventKind: event.kind,
+      title: event.title,
+      content: event.content
+    });
+    this.io.to(room.id).emit("agent_trace_delta", {
+      playerId,
+      event
+    });
+  }
+
+  private startTraceEvent(room: RoomState, playerId: string, event: AgentTraceEvent): void {
+    const trace = room.agentTraces[playerId];
+    if (!trace) {
+      return;
+    }
+    trace.events = [...trace.events, event].slice(-320);
+    trace.updatedAt = event.createdAt;
+    this.logRoomEvent(room, "agent_trace_event", {
+      playerId,
+      playerName: trace.playerName,
+      eventKind: event.kind,
+      title: event.title,
+      content: event.content
+    });
+    this.io.to(room.id).emit("agent_trace_delta", {
+      playerId,
+      event
+    });
+  }
+
+  private appendTraceChunk(room: RoomState, payload: AgentTraceChunk): void {
+    const trace = room.agentTraces[payload.playerId];
+    if (!trace) {
+      return;
+    }
+    const event = trace.events.find((candidate) => candidate.id === payload.eventId);
+    if (!event) {
+      return;
+    }
+    event.content += payload.append;
+    event.createdAt = Date.now();
+    trace.updatedAt = event.createdAt;
+    this.io.to(room.id).emit("agent_trace_chunk", payload);
+    if (payload.done) {
+      this.logRoomEvent(room, "agent_trace_event", {
+        playerId: payload.playerId,
+        playerName: trace.playerName,
+        eventKind: event.kind,
+        title: event.title,
+        content: event.content
+      });
     }
   }
 
@@ -599,6 +841,8 @@ export class RoomManager {
       createdAt: Date.now()
     };
     room.chat.push(message);
+    this.pushPublicTimeline(room, "chat", `${message.authorName}: ${text}`);
+    this.touchRoom(room);
     this.logRoomEvent(room, "agent_chat", {
       playerId,
       authorName: message.authorName,
@@ -608,12 +852,58 @@ export class RoomManager {
     return message;
   }
 
+  private rejectIfPaused(room: RoomState, clientId: string): boolean {
+    if (!room.paused) {
+      return false;
+    }
+    this.emitToClient(clientId, "error_message", "La partie est en pause.");
+    return true;
+  }
+
+  private moveClientToRoom(socket: ClientSocket, client: ClientRecord, nextRoomId: string): void {
+    if (client.roomId && client.roomId !== nextRoomId) {
+      const previousRoom = this.rooms.get(client.roomId);
+      if (previousRoom) {
+        previousRoom.spectatorClientIds.delete(client.clientId);
+        this.markPlayerConnection(previousRoom, client.clientId, false);
+        this.touchRoom(previousRoom);
+        this.syncRoom(previousRoom.id);
+      }
+      socket.leave(client.roomId);
+    }
+
+    client.roomId = nextRoomId;
+    socket.join(nextRoomId);
+  }
+
+  private markPlayerConnection(room: RoomState, clientId: string, connected: boolean, displayName?: string): void {
+    room.seats.forEach((seat) => {
+      if (seat.ownerClientId === clientId) {
+        seat.connected = connected;
+        if (displayName) {
+          seat.name = displayName;
+        }
+      }
+    });
+  }
+
+  private pushPublicTimeline(room: RoomState, kind: PublicTimelineEntry["kind"], text: string): void {
+    room.publicTimeline.push({
+      id: nanoid(),
+      kind,
+      text,
+      createdAt: Date.now()
+    });
+    room.publicTimeline = room.publicTimeline.slice(-320);
+  }
+
   private logRoomEvent(room: RoomState, type: string, payload: Record<string, unknown>): void {
     const snapshot = room.game?.getSnapshot();
     appendRoomLog(room.id, type, {
       turn: snapshot?.turn ?? null,
       currentPlayerId: snapshot?.currentPlayerId ?? null,
       finished: snapshot?.finished ?? false,
+      paused: room.paused,
       ...payload
     });
   }
@@ -649,13 +939,48 @@ export class RoomManager {
       if (client.roomId !== room.id || !client.socketId) {
         continue;
       }
-      const view = this.buildRoomView(room, client.clientId);
-      this.io.to(client.socketId).emit("sync", view);
+      this.io.to(client.socketId).emit("sync", this.buildRoomView(room, client.clientId));
     }
+  }
+
+  private buildRoomSummary(room: RoomState): RoomSummary {
+    const snapshot = room.game?.getSnapshot();
+    const hostSeat = room.seats.find((seat) => seat.ownerClientId === room.hostClientId);
+    const currentPlayerName =
+      snapshot?.players.find((player) => player.id === snapshot.currentPlayerId)?.name ??
+      room.game?.getCurrentPlayer()?.name ??
+      null;
+
+    const seatSummaries = (snapshot?.players ?? room.seats).map((seat) => ({
+      id: seat.id,
+      seatIndex: seat.seatIndex,
+      name: seat.name,
+      kind: seat.kind,
+      enabled: seat.enabled,
+      connected: seat.connected,
+      occupied: Boolean(seat.ownerClientId) || seat.kind === "agent",
+      score: seat.score,
+      isCurrentTurn: seat.isCurrentTurn
+    }));
+
+    return {
+      roomId: room.id,
+      status: getRoomStatus(room),
+      started: Boolean(snapshot?.started),
+      finished: Boolean(snapshot?.finished),
+      paused: room.paused,
+      playerCount: seatSummaries.filter((seat) => seat.enabled).length,
+      spectatorCount: room.spectatorClientIds.size,
+      hostName: hostSeat?.name ?? this.clients.get(room.hostClientId)?.displayName ?? "Hôte",
+      seatSummaries,
+      currentTurnPlayerName: currentPlayerName,
+      updatedAt: room.updatedAt
+    };
   }
 
   private buildRoomView(room: RoomState, clientId: string): RoomView {
     const playerId = this.getRoomPlayerId(room, clientId);
+    const viewerRole: ViewerRole = playerId ? "player" : "spectator";
     const game = room.game
       ? room.game.getSnapshot(playerId)
       : {
@@ -669,12 +994,12 @@ export class RoomManager {
             }))
           ),
           players: room.seats.map((seat) => ({
-              ...seat,
-              score: 0,
-              rackCount: 0,
-              rack: playerId === seat.id ? [] : undefined,
-              isCurrentTurn: false
-            })),
+            ...seat,
+            score: 0,
+            rackCount: 0,
+            rack: playerId === seat.id ? [] : undefined,
+            isCurrentTurn: false
+          })),
           currentPlayerId: null,
           turn: 1,
           bagCount: 0,
@@ -689,10 +1014,14 @@ export class RoomManager {
       hostClientId: room.hostClientId,
       joinedClientId: clientId,
       playerId,
+      viewerRole,
+      paused: room.paused,
+      status: getRoomStatus(room),
+      spectatorCount: room.spectatorClientIds.size,
       options: room.options,
       game,
-      chat: room.chat.slice(-80),
-      logs: room.logs.slice(-80),
+      chat: room.chat.slice(-120),
+      logs: room.logs.slice(-120),
       agentTraces: Object.values(room.agentTraces).sort(
         (left, right) =>
           room.seats.findIndex((seat) => seat.id === left.playerId) - room.seats.findIndex((seat) => seat.id === right.playerId)
@@ -709,6 +1038,7 @@ export class RoomManager {
     if (!client?.socketId) {
       return;
     }
+
     if (event === "sync") {
       this.io.to(client.socketId).emit("sync", payload as RoomView);
       return;
@@ -717,8 +1047,37 @@ export class RoomManager {
       this.io.to(client.socketId).emit("error_message", payload as string);
       return;
     }
-    this.io.to(client.socketId).emit("legal_moves", payload as never);
+    if (event === "legal_moves") {
+      this.io.to(client.socketId).emit("legal_moves", payload as never);
+      return;
+    }
+    if (event === "agent_trace_delta") {
+      this.io.to(client.socketId).emit("agent_trace_delta", payload as AgentTraceDelta);
+      return;
+    }
+    if (event === "agent_trace_chunk") {
+      this.io.to(client.socketId).emit("agent_trace_chunk", payload as AgentTraceChunk);
+      return;
+    }
+    this.io.to(client.socketId).emit("room_pause_state", payload as never);
   }
+
+  private touchRoom(room: RoomState): void {
+    room.updatedAt = Date.now();
+  }
+}
+
+function getRoomStatus(room: RoomState): RoomStatus {
+  if (!room.game) {
+    return "lobby";
+  }
+  if (room.game.isFinished()) {
+    return "finished";
+  }
+  if (room.paused) {
+    return "paused";
+  }
+  return "live";
 }
 
 function createSeat(
@@ -758,12 +1117,9 @@ function defaultAgentConfig() {
     model: "local-model",
     baseUrl: "http://127.0.0.1:1234/v1/chat/completions",
     systemPrompt: DEFAULT_AGENT_SYSTEM_PROMPT,
+    temperature: 0.2,
     allowLegalMoves: false
   };
-}
-
-function summarizeSeats(seats: PlayerSeat[]) {
-  return seats.map((seat) => summarizeSeat(seat));
 }
 
 function summarizeSeat(seat: PlayerSeat) {
@@ -775,8 +1131,13 @@ function summarizeSeat(seat: PlayerSeat) {
     name: seat.name,
     ownerClientId: seat.ownerClientId ?? null,
     connected: seat.connected,
-    provider: seat.agentConfig?.provider ?? null,
+    score: seat.score,
+    rackCount: seat.rackCount,
     model: seat.agentConfig?.model ?? null,
-    allowLegalMoves: Boolean(seat.agentConfig?.allowLegalMoves)
+    provider: seat.agentConfig?.provider ?? null
   };
+}
+
+function summarizeSeats(seats: PlayerSeat[]) {
+  return seats.map((seat) => summarizeSeat(seat));
 }

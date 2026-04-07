@@ -3,13 +3,20 @@ import { io, type Socket } from "socket.io-client";
 import { DEFAULT_AGENT_SYSTEM_PROMPT } from "../shared/agent-prompt";
 import type {
   AgentConfig,
+  AgentProvider,
   AgentTrace,
+  AgentTraceChunk,
+  AgentTraceDelta,
+  AgentTraceEvent,
   BoardCell,
   ChatMessage,
   ClientToServerEvents,
+  ConversationMode,
   LegalMove,
   PlacementInput,
   PlayerSeat,
+  RoomDirectoryResponse,
+  RoomSummary,
   RoomView,
   ServerToClientEvents,
   Tile
@@ -17,16 +24,40 @@ import type {
 
 const CLIENT_ID_KEY = "scrabble-codex-client-id";
 const DISPLAY_NAME_KEY = "scrabble-codex-display-name";
+const CONVERSATION_MODE_KEY = "scrabble-codex-conversation-mode";
+const API_BASE_URL = import.meta.env.DEV ? "http://localhost:3001" : "";
 
 type ClientSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
-type PendingAction = "create" | "join" | "submit_move" | "exchange_tiles" | "pass" | "chat" | "legal_moves" | null;
+type PendingAction =
+  | "create"
+  | "join"
+  | "watch"
+  | "submit_move"
+  | "exchange_tiles"
+  | "pass"
+  | "chat"
+  | "legal_moves"
+  | "pause"
+  | null;
+
+type Route = { page: "home" } | { page: "room"; roomId: string };
+
+type ConversationItem =
+  | { id: string; createdAt: number; type: "chat"; message: ChatMessage }
+  | { id: string; createdAt: number; type: "trace"; trace: AgentTrace; event: AgentTraceEvent };
 
 export function App() {
+  const [route, setRoute] = useState<Route>(() => parseRoute(window.location.pathname));
   const [clientId] = useState(() => getOrCreateClientId());
   const [displayName, setDisplayName] = useState(() => localStorage.getItem(DISPLAY_NAME_KEY) || "Joueur");
+  const [conversationMode, setConversationMode] = useState<ConversationMode>(
+    () => (localStorage.getItem(CONVERSATION_MODE_KEY) as ConversationMode) || "user"
+  );
   const [roomCode, setRoomCode] = useState("");
   const [view, setView] = useState<RoomView | null>(null);
+  const [rooms, setRooms] = useState<RoomSummary[]>([]);
   const [error, setError] = useState("");
+  const [loadingRoom, setLoadingRoom] = useState(false);
   const [legalMoves, setLegalMoves] = useState<LegalMove[]>([]);
   const [showLegalMovesPanel, setShowLegalMovesPanel] = useState(false);
   const [selectedTileId, setSelectedTileId] = useState<string | null>(null);
@@ -35,8 +66,10 @@ export function App() {
   const [exchangeSelection, setExchangeSelection] = useState<string[]>([]);
   const [chatDraft, setChatDraft] = useState("");
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
-  const [openTraceIds, setOpenTraceIds] = useState<string[]>([]);
+  const [expandedConversationId, setExpandedConversationId] = useState<string | null>(null);
   const pendingActionRef = useRef<PendingAction>(null);
+  const lastFeedIdRef = useRef<string | null>(null);
+  const expectedRoomIdRef = useRef<string | null>(null);
 
   const socket = useMemo<ClientSocket>(() => {
     const serverUrl = import.meta.env.DEV ? "http://localhost:3001" : undefined;
@@ -52,6 +85,12 @@ export function App() {
   }, [clientId]);
 
   useEffect(() => {
+    const handlePopState = () => setRoute(parseRoute(window.location.pathname));
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
+  useEffect(() => {
     socket.auth = {
       clientId,
       displayName
@@ -59,17 +98,44 @@ export function App() {
   }, [socket, clientId, displayName]);
 
   useEffect(() => {
+    localStorage.setItem(DISPLAY_NAME_KEY, displayName);
+  }, [displayName]);
+
+  useEffect(() => {
+    localStorage.setItem(CONVERSATION_MODE_KEY, conversationMode);
+  }, [conversationMode]);
+
+  useEffect(() => {
+    function acceptSync(nextView: RoomView): boolean {
+      if (pendingActionRef.current === "join" || pendingActionRef.current === "watch") {
+        return expectedRoomIdRef.current === nextView.roomId;
+      }
+      if (pendingActionRef.current === "create") {
+        return nextView.roomId !== expectedRoomIdRef.current;
+      }
+      return route.page === "room" && route.roomId === nextView.roomId;
+    }
+
     socket.on("sync", (nextView) => {
+      if (!acceptSync(nextView)) {
+        return;
+      }
       setError("");
       setPendingAction(null);
       pendingActionRef.current = null;
+      expectedRoomIdRef.current = nextView.roomId;
       setView(nextView);
       setRoomCode(nextView.roomId);
+      setLoadingRoom(false);
       if (!nextView.options.showLegalMoves) {
         setLegalMoves([]);
         setShowLegalMovesPanel(false);
       }
+      if (route.page !== "room" || route.roomId !== nextView.roomId) {
+        navigateTo(setRoute, `/rooms/${nextView.roomId}`);
+      }
     });
+
     socket.on("error_message", (message) => {
       setError(message);
       if (pendingActionRef.current === "submit_move") {
@@ -85,26 +151,51 @@ export function App() {
       }
       setPendingAction(null);
       pendingActionRef.current = null;
+      expectedRoomIdRef.current = null;
     });
+
     socket.on("legal_moves", (moves) => {
       setPendingAction(null);
       pendingActionRef.current = null;
+      expectedRoomIdRef.current = null;
       setLegalMoves(moves);
       setShowLegalMovesPanel(true);
     });
+
+    socket.on("agent_trace_delta", (payload) => {
+      setView((current) => mergeTraceDelta(current, payload));
+    });
+
+    socket.on("agent_trace_chunk", (payload) => {
+      setView((current) => mergeTraceChunk(current, payload));
+    });
+
+    socket.on("room_pause_state", (payload) => {
+      setView((current) =>
+        current && current.roomId === payload.roomId
+          ? {
+              ...current,
+              paused: payload.paused,
+              status: current.game.finished ? "finished" : payload.paused ? "paused" : current.game.started ? "live" : "lobby"
+            }
+          : current
+      );
+    });
+
     socket.on("connect_error", () => {
       setError("Connexion serveur interrompue. Reconnexion en cours.");
       setPendingAction(null);
       pendingActionRef.current = null;
+      expectedRoomIdRef.current = null;
       setTimeout(() => {
         if (!socket.connected) {
           socket.connect();
         }
       }, 500);
     });
+
     socket.on("disconnect", (reason) => {
       if (reason === "io server disconnect") {
-        setError("Le serveur a fermé la session. Reconnexion en cours.");
         socket.connect();
       }
     });
@@ -113,63 +204,156 @@ export function App() {
       socket.off("sync");
       socket.off("error_message");
       socket.off("legal_moves");
+      socket.off("agent_trace_delta");
+      socket.off("agent_trace_chunk");
+      socket.off("room_pause_state");
       socket.off("connect_error");
       socket.off("disconnect");
       socket.disconnect();
     };
-  }, [socket]);
+  }, [route, socket]);
 
   useEffect(() => {
-    localStorage.setItem(DISPLAY_NAME_KEY, displayName);
-  }, [displayName]);
+    if (route.page !== "home") {
+      return;
+    }
+    expectedRoomIdRef.current = null;
+    ensureSocketReady(socket, clientId, displayName, () => {
+      socket.emit("leave_room");
+    });
+    let cancelled = false;
+
+    const loadRooms = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/rooms`);
+        const payload = (await response.json()) as RoomDirectoryResponse;
+        if (!cancelled) {
+          setRooms(payload.rooms);
+        }
+      } catch {
+        if (!cancelled) {
+          setRooms([]);
+        }
+      }
+    };
+
+    void loadRooms();
+    const timer = window.setInterval(() => {
+      void loadRooms();
+    }, 5000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [route.page]);
+
+  useEffect(() => {
+    if (route.page !== "room") {
+      setView(null);
+      setLoadingRoom(false);
+      return;
+    }
+
+    let cancelled = false;
+    setLoadingRoom(true);
+    setError("");
+    setView((current) => (current?.roomId === route.roomId ? current : null));
+
+    const loadRoom = async () => {
+      try {
+        const response = await fetch(
+          `${API_BASE_URL}/api/rooms/${encodeURIComponent(route.roomId)}?clientId=${encodeURIComponent(clientId)}`
+        );
+        if (!response.ok) {
+          throw new Error(String(response.status));
+        }
+        const payload = (await response.json()) as RoomView;
+        if (!cancelled && route.page === "room" && route.roomId === payload.roomId) {
+          setView(payload);
+          setRoomCode(payload.roomId);
+          setLoadingRoom(false);
+        }
+      } catch {
+        if (!cancelled) {
+          setView(null);
+          setLoadingRoom(false);
+        }
+      }
+    };
+
+    void loadRoom();
+    setPendingAction("watch");
+    pendingActionRef.current = "watch";
+    expectedRoomIdRef.current = route.roomId;
+    ensureSocketReady(socket, clientId, displayName, () => {
+      socket.emit("watch_room", { roomId: route.roomId, displayName });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [route, socket, clientId, displayName]);
 
   useEffect(() => {
     setTentativePlacements([]);
     setExchangeSelection([]);
     setSelectedTileId(null);
     setDraggedTileId(null);
-  }, [view?.game.lastMove?.id, view?.game.currentPlayerId, view?.game.started]);
+  }, [view?.game.lastMove?.id, view?.game.currentPlayerId, view?.game.started, view?.paused]);
 
   const me = view?.game.players.find((player) => player.id === view.playerId) ?? null;
   const myRack = me?.rack ?? [];
-  const myTurn = Boolean(view?.playerId && view.game.currentPlayerId === view.playerId && !view.game.finished);
+  const myTurn = Boolean(view?.viewerRole === "player" && view.playerId && view.game.currentPlayerId === view.playerId && !view.game.finished && !view.paused);
   const isHost = Boolean(view && view.hostClientId === view.joinedClientId);
-  const gameStarted = Boolean(view?.game.started);
+  const activeHumanSeatAvailable = Boolean(
+    view?.status === "lobby" && view.game.players.some((seat) => seat.enabled && seat.kind === "human" && !seat.ownerClientId)
+  );
   const showLegalMovesFeature = Boolean(view?.options.showLegalMoves);
+  const activeTracePlayerId = getActiveTracePlayerId(view?.agentTraces ?? []);
+  const conversationFeed = useMemo(
+    () => buildConversationFeed(view, conversationMode, activeTracePlayerId),
+    [view, conversationMode, activeTracePlayerId]
+  );
 
-  function ensureSocketReady(callback?: () => void) {
-    socket.auth = {
-      clientId,
-      displayName
-    };
-    if (socket.connected) {
-      callback?.();
+  useEffect(() => {
+    const latestId = conversationFeed.at(-1)?.id ?? null;
+    if (!latestId) {
       return;
     }
-    socket.once("connect", () => callback?.());
-    if (!socket.active) {
-      socket.connect();
+    if (latestId !== lastFeedIdRef.current) {
+      setExpandedConversationId(latestId);
+      lastFeedIdRef.current = latestId;
     }
-  }
-
-  function emitWhenConnected(callback: () => void) {
-    ensureSocketReady(callback);
-  }
+  }, [conversationFeed]);
 
   function createRoom() {
     setPendingAction("create");
     pendingActionRef.current = "create";
-    ensureSocketReady(() => {
+    expectedRoomIdRef.current = view?.roomId ?? null;
+    ensureSocketReady(socket, clientId, displayName, () => {
+      socket.emit("leave_room");
       socket.emit("create_room", { displayName });
     });
   }
 
-  function joinRoom() {
+  function joinRoom(targetRoomId?: string) {
+    const nextRoomId = (targetRoomId ?? roomCode).trim();
+    if (!nextRoomId) {
+      setError("Entre un code salon.");
+      return;
+    }
     setPendingAction("join");
     pendingActionRef.current = "join";
-    ensureSocketReady(() => {
-      socket.emit("join_room", { roomId: roomCode.trim(), displayName });
+    expectedRoomIdRef.current = nextRoomId;
+    ensureSocketReady(socket, clientId, displayName, () => {
+      socket.emit("leave_room");
+      socket.emit("join_room", { roomId: nextRoomId, displayName });
     });
+  }
+
+  function watchRoom(nextRoomId: string) {
+    navigateTo(setRoute, `/rooms/${nextRoomId}`);
   }
 
   function updateSeat(seat: PlayerSeat, patch: Partial<PlayerSeat> & { agentConfig?: AgentConfig }) {
@@ -295,7 +479,7 @@ export function App() {
     }
     setPendingAction("submit_move");
     pendingActionRef.current = "submit_move";
-    emitWhenConnected(() => {
+    ensureSocketReady(socket, clientId, displayName, () => {
       socket.emit("submit_move", {
         roomId: view.roomId,
         placements: tentativePlacements
@@ -309,7 +493,7 @@ export function App() {
     }
     setPendingAction("exchange_tiles");
     pendingActionRef.current = "exchange_tiles";
-    emitWhenConnected(() => {
+    ensureSocketReady(socket, clientId, displayName, () => {
       socket.emit("exchange_tiles", {
         roomId: view.roomId,
         tileIds: exchangeSelection
@@ -323,7 +507,7 @@ export function App() {
     }
     setPendingAction("pass");
     pendingActionRef.current = "pass";
-    emitWhenConnected(() => {
+    ensureSocketReady(socket, clientId, displayName, () => {
       socket.emit("pass_turn", { roomId: view.roomId });
     });
   }
@@ -334,7 +518,7 @@ export function App() {
     }
     setPendingAction("chat");
     pendingActionRef.current = "chat";
-    emitWhenConnected(() => {
+    ensureSocketReady(socket, clientId, displayName, () => {
       socket.emit("send_chat", {
         roomId: view.roomId,
         text: chatDraft
@@ -349,8 +533,19 @@ export function App() {
     }
     setPendingAction("legal_moves");
     pendingActionRef.current = "legal_moves";
-    emitWhenConnected(() => {
+    ensureSocketReady(socket, clientId, displayName, () => {
       socket.emit("get_legal_moves", { roomId: view.roomId });
+    });
+  }
+
+  function togglePause() {
+    if (!view) {
+      return;
+    }
+    setPendingAction("pause");
+    pendingActionRef.current = "pause";
+    ensureSocketReady(socket, clientId, displayName, () => {
+      socket.emit("toggle_pause", { roomId: view.roomId });
     });
   }
 
@@ -358,7 +553,7 @@ export function App() {
     if (!view) {
       return;
     }
-    emitWhenConnected(() => {
+    ensureSocketReady(socket, clientId, displayName, () => {
       socket.emit("start_game", { roomId: view.roomId });
     });
   }
@@ -379,398 +574,799 @@ export function App() {
     : "En attente";
 
   return (
-    <div className="min-h-screen overflow-x-hidden bg-[radial-gradient(circle_at_top_left,_rgba(234,88,12,0.18),_transparent_28%),radial-gradient(circle_at_bottom_right,_rgba(8,145,178,0.22),_transparent_32%),linear-gradient(145deg,#faf6ed,#eadfc6_48%,#f8f2e8)] text-slate-900">
-      <div className="mx-auto flex min-h-screen w-full max-w-none flex-col gap-4 px-3 py-4 md:px-4 md:py-5">
-        <header className="rounded-[28px] border border-white/50 bg-white/70 p-5 shadow-[0_24px_80px_rgba(72,52,12,0.12)] backdrop-blur">
-          <div className={`grid gap-5 ${gameStarted ? "lg:grid-cols-[1fr_auto]" : "lg:grid-cols-[1.2fr_430px]"}`}>
+    <div className="h-screen overflow-hidden bg-slate-50 text-slate-900">
+      {route.page === "home" ? (
+        <HomePage
+          displayName={displayName}
+          setDisplayName={setDisplayName}
+          roomCode={roomCode}
+          setRoomCode={setRoomCode}
+          rooms={rooms}
+          error={error}
+          onCreate={createRoom}
+          onJoin={() => joinRoom()}
+          onJoinRoom={(nextRoomId) => joinRoom(nextRoomId)}
+          onWatch={watchRoom}
+        />
+      ) : (
+        <RoomPage
+          routeRoomId={route.roomId}
+          view={view}
+          loadingRoom={loadingRoom}
+          displayName={displayName}
+          setDisplayName={setDisplayName}
+          error={error}
+          isHost={isHost}
+          boardTitle={boardTitle}
+          conversationMode={conversationMode}
+          onCycleMode={() => setConversationMode(nextConversationMode(conversationMode))}
+          onPause={togglePause}
+          conversationFeed={conversationFeed}
+          expandedConversationId={expandedConversationId}
+          onToggleConversationItem={(id) => setExpandedConversationId((current) => (current === id ? null : id))}
+          chatDraft={chatDraft}
+          setChatDraft={setChatDraft}
+          onSendChat={sendChat}
+          onJoinAsPlayer={() => joinRoom(route.roomId)}
+          activeHumanSeatAvailable={activeHumanSeatAvailable}
+          updateSeat={updateSeat}
+          updateRoomOption={updateRoomOption}
+          startGame={startGame}
+          myTurn={myTurn}
+          myRack={myRack}
+          tentativePlacements={tentativePlacements}
+          setTentativePlacements={setTentativePlacements}
+          selectedTileId={selectedTileId}
+          draggedTileId={draggedTileId}
+          setDraggedTileId={setDraggedTileId}
+          setSelectedTileId={setSelectedTileId}
+          exchangeSelection={exchangeSelection}
+          setExchangeSelection={setExchangeSelection}
+          onBoardClick={onBoardClick}
+          onDropTile={placeTileOnCell}
+          submitMove={submitMove}
+          clearDraftMove={clearDraftMove}
+          passTurn={passTurn}
+          exchangeTiles={exchangeTiles}
+          showLegalMovesFeature={showLegalMovesFeature}
+          showLegalMovesPanel={showLegalMovesPanel}
+          toggleLegalMovesPanel={toggleLegalMovesPanel}
+          requestLegalMoves={requestLegalMoves}
+          legalMoves={legalMoves}
+        />
+      )}
+    </div>
+  );
+}
+
+function HomePage({
+  displayName,
+  setDisplayName,
+  roomCode,
+  setRoomCode,
+  rooms,
+  error,
+  onCreate,
+  onJoin,
+  onJoinRoom,
+  onWatch
+}: {
+  displayName: string;
+  setDisplayName: (value: string) => void;
+  roomCode: string;
+  setRoomCode: (value: string) => void;
+  rooms: RoomSummary[];
+  error: string;
+  onCreate: () => void;
+  onJoin: () => void;
+  onJoinRoom: (roomId: string) => void;
+  onWatch: (roomId: string) => void;
+}) {
+  return (
+    <div className="min-h-screen overflow-y-auto bg-slate-50 px-4 py-6 md:px-6">
+      <div className="mx-auto grid max-w-7xl gap-6">
+        <section className="rounded-[28px] bg-white p-6 shadow-xl shadow-slate-200/80">
+          <div className="grid gap-6 xl:grid-cols-[1.3fr_0.7fr]">
             <div>
-              <p className="mb-2 text-xs font-semibold uppercase tracking-[0.35em] text-orange-700">Scrabble Webapp</p>
-              <h1 className="font-['Arial_Narrow'] text-5xl font-bold uppercase tracking-[0.08em] text-slate-900 md:text-7xl">
-                Scrabble Codex
-              </h1>
-              <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-600 md:text-base">
-                Salons multijoueur, humains et agents IA, chat temps réel, validation serveur autoritaire et assistance
-                facultative par coups légaux.
+              <p className="text-sm font-semibold uppercase tracking-[0.3em] text-indigo-500">Scrabble Webapp</p>
+              <h1 className="mt-2 text-5xl font-black tracking-[0.08em] text-slate-900 md:text-7xl">SCRABBLE CODEX</h1>
+              <p className="mt-4 max-w-3xl text-lg leading-8 text-slate-600">
+                Parties multijoueur partageables, spectateurs en lecture, agents IA, chat temps réel et orchestration
+                serveur autoritaire.
               </p>
             </div>
-
-            {!gameStarted ? (
-              <div className="grid gap-3 rounded-3xl border border-slate-200 bg-amber-50/80 p-4">
-                <label className="grid gap-2 text-sm font-medium text-slate-700">
-                  Nom
-                  <input
-                    className="rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none ring-0 transition focus:border-cyan-600"
-                    value={displayName}
-                    onChange={(event) => setDisplayName(event.target.value)}
-                  />
-                </label>
-                <label className="grid gap-2 text-sm font-medium text-slate-700">
-                  Code salon
-                  <input
-                    className="rounded-2xl border border-slate-200 bg-white px-4 py-3 uppercase outline-none transition focus:border-cyan-600"
-                    value={roomCode}
-                    onChange={(event) => setRoomCode(event.target.value)}
-                  />
-                </label>
-                <div className="flex flex-wrap gap-3">
-                  <button
-                    className="rounded-2xl bg-cyan-700 px-4 py-3 font-semibold text-white transition hover:bg-cyan-800"
-                    onClick={createRoom}
-                  >
-                    Créer
-                  </button>
-                  <button
-                    className="rounded-2xl bg-slate-200 px-4 py-3 font-semibold text-slate-800 transition hover:bg-slate-300"
-                    onClick={joinRoom}
-                  >
-                    Rejoindre
-                  </button>
-                </div>
-                {error ? <InlineError message={error} /> : null}
+            <div className="grid gap-4 rounded-[28px] bg-slate-50 p-5">
+              <label className="grid gap-2 text-sm font-semibold text-slate-700">
+                Nom
+                <input
+                  className="rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-indigo-500"
+                  value={displayName}
+                  onChange={(event) => setDisplayName(event.target.value)}
+                />
+              </label>
+              <label className="grid gap-2 text-sm font-semibold text-slate-700">
+                Code salon
+                <input
+                  className="rounded-2xl border border-slate-200 bg-white px-4 py-3 uppercase outline-none transition focus:border-indigo-500"
+                  value={roomCode}
+                  onChange={(event) => setRoomCode(event.target.value)}
+                />
+              </label>
+              <div className="flex flex-wrap gap-3">
+                <button className="rounded-2xl bg-indigo-600 px-5 py-3 font-semibold text-white" onClick={onCreate}>
+                  Créer une partie
+                </button>
+                <button className="rounded-2xl bg-slate-200 px-5 py-3 font-semibold text-slate-800" onClick={onJoin}>
+                  Rejoindre comme joueur
+                </button>
               </div>
-            ) : (
-              <div className="flex items-start justify-end">
-                <div className="rounded-3xl border border-cyan-200 bg-cyan-50/90 px-5 py-4 text-right">
-                  <p className="text-xs uppercase tracking-[0.28em] text-cyan-700">Salle</p>
-                  <p className="text-3xl font-bold tracking-[0.2em]">{view?.roomId}</p>
-                </div>
-              </div>
-            )}
+              {error ? <InlineError message={error} /> : null}
+            </div>
           </div>
-        </header>
+        </section>
 
-        {view ? (
-          <main
-            className={`grid items-start justify-center gap-4 ${
-              gameStarted
-                ? "2xl:grid-cols-[minmax(760px,1.45fr)_minmax(520px,1fr)] xl:grid-cols-[minmax(680px,1.35fr)_minmax(440px,1fr)]"
-                : "xl:grid-cols-[420px_minmax(0,1fr)]"
-            }`}
+        <section className="rounded-[28px] bg-white p-6 shadow-xl shadow-slate-200/80">
+          <div className="mb-5 flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold uppercase tracking-[0.28em] text-slate-400">Directory</p>
+              <h2 className="text-3xl font-bold text-slate-900">Parties en cours</h2>
+            </div>
+            <span className="rounded-full bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-600">{rooms.length} salon(s)</span>
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">
+            {rooms.map((room) => (
+              <RoomCard
+                key={room.roomId}
+                room={room}
+                onWatch={() => onWatch(room.roomId)}
+                onJoin={room.status === "lobby" && room.seatSummaries.some((seat) => seat.enabled && seat.kind === "human" && !seat.occupied) ? () => onJoinRoom(room.roomId) : null}
+              />
+            ))}
+            {rooms.length === 0 ? (
+              <div className="rounded-[24px] border border-dashed border-slate-300 bg-slate-50 p-6 text-slate-500">
+                Aucun salon actif pour le moment.
+              </div>
+            ) : null}
+          </div>
+        </section>
+      </div>
+    </div>
+  );
+}
+
+function RoomPage(props: {
+  routeRoomId: string;
+  view: RoomView | null;
+  loadingRoom: boolean;
+  displayName: string;
+  setDisplayName: (value: string) => void;
+  error: string;
+  isHost: boolean;
+  boardTitle: string;
+  conversationMode: ConversationMode;
+  onCycleMode: () => void;
+  onPause: () => void;
+  conversationFeed: ConversationItem[];
+  expandedConversationId: string | null;
+  onToggleConversationItem: (id: string) => void;
+  chatDraft: string;
+  setChatDraft: (value: string) => void;
+  onSendChat: () => void;
+  onJoinAsPlayer: () => void;
+  activeHumanSeatAvailable: boolean;
+  updateSeat: (seat: PlayerSeat, patch: Partial<PlayerSeat> & { agentConfig?: AgentConfig }) => void;
+  updateRoomOption: (showLegalMoves: boolean) => void;
+  startGame: () => void;
+  myTurn: boolean;
+  myRack: Tile[];
+  tentativePlacements: PlacementInput[];
+  selectedTileId: string | null;
+  draggedTileId: string | null;
+  setDraggedTileId: (tileId: string | null) => void;
+  setSelectedTileId: (tileId: string | null) => void;
+  exchangeSelection: string[];
+  setExchangeSelection: React.Dispatch<React.SetStateAction<string[]>>;
+  onBoardClick: (cell: BoardCell) => void;
+  onDropTile: (tileId: string, cell: BoardCell) => void;
+  submitMove: () => void;
+  clearDraftMove: () => void;
+  passTurn: () => void;
+  exchangeTiles: () => void;
+  showLegalMovesFeature: boolean;
+  showLegalMovesPanel: boolean;
+  toggleLegalMovesPanel: () => void;
+  requestLegalMoves: () => void;
+  legalMoves: LegalMove[];
+}) {
+  const {
+    routeRoomId,
+    view,
+    loadingRoom,
+    displayName,
+    setDisplayName,
+    error,
+    isHost,
+    boardTitle,
+    conversationMode,
+    onCycleMode,
+    onPause,
+    conversationFeed,
+    expandedConversationId,
+    onToggleConversationItem,
+    chatDraft,
+    setChatDraft,
+    onSendChat,
+    onJoinAsPlayer,
+    activeHumanSeatAvailable,
+    updateSeat,
+    updateRoomOption,
+    startGame,
+    myTurn,
+    myRack,
+    tentativePlacements,
+    selectedTileId,
+    draggedTileId,
+    setDraggedTileId,
+    setSelectedTileId,
+    exchangeSelection,
+    setExchangeSelection,
+    onBoardClick,
+    onDropTile,
+    submitMove,
+    clearDraftMove,
+    passTurn,
+    exchangeTiles,
+    showLegalMovesFeature,
+    showLegalMovesPanel,
+    toggleLegalMovesPanel,
+    requestLegalMoves,
+    legalMoves
+  } = props;
+
+  const feedRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const node = feedRef.current;
+    if (!node) {
+      return;
+    }
+    const nearBottom = node.scrollHeight - node.scrollTop - node.clientHeight < 120;
+    if (nearBottom) {
+      node.scrollTop = node.scrollHeight;
+    }
+  }, [conversationFeed]);
+
+  if (loadingRoom && !view) {
+    return (
+      <div className="flex h-full items-center justify-center bg-slate-50">
+        <div className="rounded-[24px] bg-white px-6 py-5 shadow-xl shadow-slate-200/80">Chargement de la partie…</div>
+      </div>
+    );
+  }
+
+  if (!view) {
+    return (
+      <div className="flex h-full items-center justify-center bg-slate-50 px-4">
+        <div className="grid max-w-xl gap-4 rounded-[28px] bg-white p-8 text-center shadow-xl shadow-slate-200/80">
+          <h1 className="text-3xl font-bold">Partie introuvable</h1>
+          <p className="text-slate-600">Le salon `{routeRoomId}` n’existe pas ou n’est plus disponible en mémoire.</p>
+          <button className="rounded-2xl bg-indigo-600 px-5 py-3 font-semibold text-white" onClick={() => window.location.assign("/")}>
+            Retour à l’accueil
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-full min-h-0 flex-col overflow-hidden px-3 py-3 md:px-4">
+      <header className="mb-3 rounded-[28px] bg-white px-5 py-4 shadow-xl shadow-slate-200/80">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <p className="text-sm font-semibold uppercase tracking-[0.3em] text-indigo-500">Salle {view.roomId}</p>
+            <h1 className="mt-1 text-4xl font-black tracking-[0.08em] text-slate-900 md:text-5xl">SCRABBLE CODEX</h1>
+            <p className="mt-2 text-sm text-slate-500">
+              {view.status === "lobby" ? "Lobby public" : boardTitle}
+              {view.paused ? " · En pause" : ""}
+            </p>
+          </div>
+          <div className="grid gap-3 md:min-w-[280px]">
+            <label className="grid gap-2 text-sm font-semibold text-slate-700">
+              Nom
+              <input
+                className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none transition focus:border-indigo-500"
+                value={displayName}
+                onChange={(event) => setDisplayName(event.target.value)}
+              />
+            </label>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <span className="rounded-full bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-600">
+                {view.viewerRole === "player" ? "Joueur" : "Spectateur"}
+              </span>
+              {view.status === "lobby" && view.viewerRole === "spectator" && activeHumanSeatAvailable ? (
+                <button className="rounded-2xl bg-indigo-600 px-4 py-3 font-semibold text-white" onClick={onJoinAsPlayer}>
+                  Rejoindre comme joueur
+                </button>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <main className="grid min-h-0 flex-1 gap-3 xl:grid-cols-[280px_minmax(0,0.92fr)_520px]">
+        <aside className="min-h-0 overflow-y-auto rounded-[28px] bg-white p-4 shadow-xl shadow-slate-200/80">
+          <div className="mb-4">
+            <p className="text-sm font-semibold uppercase tracking-[0.28em] text-slate-400">Leaderboard</p>
+            <h2 className="text-2xl font-bold text-slate-900">Scores</h2>
+          </div>
+          <div className="grid gap-3">
+            {view.game.players.map((player) => (
+              <LeaderboardCard key={player.id} player={player} />
+            ))}
+          </div>
+          <div className="mt-4 rounded-[24px] bg-slate-50 p-4 text-sm text-slate-600">
+            <p>Spectateurs: {view.spectatorCount}</p>
+            <p className="mt-1">Statut: {roomStatusLabel(view.status)}</p>
+          </div>
+        </aside>
+
+        <section className="min-h-0 overflow-y-auto rounded-[28px] bg-white p-4 shadow-xl shadow-slate-200/80">
+          {view.status === "lobby" ? (
+            <LobbyView
+              view={view}
+              error={error}
+              isHost={isHost}
+              updateSeat={updateSeat}
+              updateRoomOption={updateRoomOption}
+              startGame={startGame}
+            />
+          ) : (
+            <GameView
+              view={view}
+              error={error}
+              myTurn={myTurn}
+              myRack={myRack}
+              tentativePlacements={tentativePlacements}
+              selectedTileId={selectedTileId}
+              draggedTileId={draggedTileId}
+              setDraggedTileId={setDraggedTileId}
+              setSelectedTileId={setSelectedTileId}
+              exchangeSelection={exchangeSelection}
+              setExchangeSelection={setExchangeSelection}
+              onBoardClick={onBoardClick}
+              onDropTile={onDropTile}
+              submitMove={submitMove}
+              clearDraftMove={clearDraftMove}
+              passTurn={passTurn}
+              exchangeTiles={exchangeTiles}
+              showLegalMovesFeature={showLegalMovesFeature}
+              showLegalMovesPanel={showLegalMovesPanel}
+              toggleLegalMovesPanel={toggleLegalMovesPanel}
+              requestLegalMoves={requestLegalMoves}
+              legalMoves={legalMoves}
+            />
+          )}
+        </section>
+
+        <ConversationPanel
+          view={view}
+          mode={conversationMode}
+          onCycleMode={onCycleMode}
+          onPause={onPause}
+          isHost={isHost}
+          feedRef={feedRef}
+          items={conversationFeed}
+          expandedConversationId={expandedConversationId}
+          onToggleConversationItem={onToggleConversationItem}
+          chatDraft={chatDraft}
+          setChatDraft={setChatDraft}
+          onSendChat={onSendChat}
+        />
+      </main>
+    </div>
+  );
+}
+
+function LobbyView({
+  view,
+  error,
+  isHost,
+  updateSeat,
+  updateRoomOption,
+  startGame
+}: {
+  view: RoomView;
+  error: string;
+  isHost: boolean;
+  updateSeat: (seat: PlayerSeat, patch: Partial<PlayerSeat> & { agentConfig?: AgentConfig }) => void;
+  updateRoomOption: (showLegalMoves: boolean) => void;
+  startGame: () => void;
+}) {
+  return (
+    <div className="grid gap-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold uppercase tracking-[0.28em] text-indigo-500">Lobby public</p>
+          <h2 className="text-3xl font-bold text-slate-900">Configure la partie</h2>
+          <p className="mt-2 text-slate-600">Les spectateurs voient ce salon en direct et peuvent écrire dans le chat.</p>
+        </div>
+        {isHost ? (
+          <button className="rounded-2xl bg-indigo-600 px-5 py-3 font-semibold text-white" onClick={startGame}>
+            Lancer la partie
+          </button>
+        ) : null}
+      </div>
+
+      {error ? <InlineError message={error} /> : null}
+
+      <div className="rounded-[24px] bg-slate-50 p-4">
+        <label className="flex items-center gap-3 text-sm font-semibold text-slate-700">
+          <input
+            type="checkbox"
+            className="h-5 w-5 rounded border-slate-300 text-indigo-600"
+            checked={view.options.showLegalMoves}
+            disabled={!isHost}
+            onChange={(event) => updateRoomOption(event.target.checked)}
+          />
+          Autoriser l’affichage des coups légaux pour les humains
+        </label>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-2">
+        {view.game.players.map((seat) => (
+          <SeatEditor key={seat.id} seat={seat} disabled={!isHost || view.game.started} onChange={updateSeat} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function GameView({
+  view,
+  error,
+  myTurn,
+  myRack,
+  tentativePlacements,
+  setTentativePlacements,
+  selectedTileId,
+  draggedTileId,
+  setDraggedTileId,
+  setSelectedTileId,
+  exchangeSelection,
+  setExchangeSelection,
+  onBoardClick,
+  onDropTile,
+  submitMove,
+  clearDraftMove,
+  passTurn,
+  exchangeTiles,
+  showLegalMovesFeature,
+  showLegalMovesPanel,
+  toggleLegalMovesPanel,
+  requestLegalMoves,
+  legalMoves
+}: {
+  view: RoomView;
+  error: string;
+  myTurn: boolean;
+  myRack: Tile[];
+  tentativePlacements: PlacementInput[];
+  setTentativePlacements: React.Dispatch<React.SetStateAction<PlacementInput[]>>;
+  selectedTileId: string | null;
+  draggedTileId: string | null;
+  setDraggedTileId: (tileId: string | null) => void;
+  setSelectedTileId: (tileId: string | null) => void;
+  exchangeSelection: string[];
+  setExchangeSelection: React.Dispatch<React.SetStateAction<string[]>>;
+  onBoardClick: (cell: BoardCell) => void;
+  onDropTile: (tileId: string, cell: BoardCell) => void;
+  submitMove: () => void;
+  clearDraftMove: () => void;
+  passTurn: () => void;
+  exchangeTiles: () => void;
+  showLegalMovesFeature: boolean;
+  showLegalMovesPanel: boolean;
+  toggleLegalMovesPanel: () => void;
+  requestLegalMoves: () => void;
+  legalMoves: LegalMove[];
+}) {
+  return (
+    <div className="grid gap-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold uppercase tracking-[0.28em] text-indigo-500">Partie</p>
+          <h2 className="text-3xl font-bold text-slate-900">Tour {view.game.turn}</h2>
+          <p className="mt-2 text-slate-600">
+            {view.game.players.find((player) => player.id === view.game.currentPlayerId)?.name ?? "En attente"}
+            {view.paused ? " · Pause" : ""}
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            className="rounded-2xl bg-indigo-600 px-4 py-3 font-semibold text-white disabled:cursor-not-allowed disabled:bg-indigo-300"
+            onClick={submitMove}
+            disabled={!myTurn || tentativePlacements.length === 0}
           >
-            {!gameStarted ? (
-              <>
-                <section className="rounded-[28px] border border-white/50 bg-white/75 p-5 shadow-[0_24px_80px_rgba(72,52,12,0.12)] backdrop-blur">
-                  <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
-                    <div>
-                      <p className="text-xs uppercase tracking-[0.28em] text-orange-700">Lobby</p>
-                      <h2 className="text-2xl font-semibold">Salon {view.roomId}</h2>
-                    </div>
-                    {isHost ? (
-                      <button
-                        className="rounded-2xl bg-cyan-700 px-4 py-3 font-semibold text-white transition hover:bg-cyan-800"
-                        onClick={startGame}
-                      >
-                        Lancer la partie
-                      </button>
-                    ) : null}
-                  </div>
+            Jouer
+          </button>
+          <button
+            className="rounded-2xl bg-slate-200 px-4 py-3 font-semibold text-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+            onClick={clearDraftMove}
+            disabled={tentativePlacements.length === 0}
+          >
+            Effacer
+          </button>
+          <button
+            className="rounded-2xl bg-slate-200 px-4 py-3 font-semibold text-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+            onClick={passTurn}
+            disabled={!myTurn}
+          >
+            Passer
+          </button>
+        </div>
+      </div>
 
-                  <div className="mb-5 rounded-3xl border border-slate-200 bg-slate-50 p-4">
-                    <div className="mb-3 flex items-center justify-between gap-3">
-                      <div>
-                        <h3 className="text-lg font-semibold">Options de partie</h3>
-                        <p className="text-sm text-slate-600">Choisis si les joueurs humains pourront demander les coups légaux.</p>
-                      </div>
-                    </div>
-                    <label className="flex items-center gap-3 text-sm font-medium text-slate-700">
-                      <input
-                        type="checkbox"
-                        className="h-5 w-5 rounded border-slate-300 text-cyan-700"
-                        checked={view.options.showLegalMoves}
-                        disabled={!isHost}
-                        onChange={(event) => updateRoomOption(event.target.checked)}
-                      />
-                      Autoriser l’affichage des coups légaux pendant la partie
-                    </label>
-                  </div>
+      {error ? <InlineError message={error} /> : null}
 
-                  <div className="grid gap-3">
-                    {view.game.players.map((seat) => (
-                      <SeatEditor key={seat.id} seat={seat} disabled={!isHost || view.game.started} onChange={updateSeat} />
-                    ))}
-                  </div>
-                </section>
+      <div className="rounded-[28px] bg-slate-50 p-4">
+        <BoardGrid
+          board={view.game.board}
+          tentativePlacements={tentativePlacements}
+          myRack={myRack}
+          myTurn={myTurn}
+          onClickCell={onBoardClick}
+          onDropTile={onDropTile}
+          onStartDraggingTile={setDraggedTileId}
+          draggedTileId={draggedTileId}
+        />
+      </div>
 
-                <section className="rounded-[28px] border border-white/50 bg-white/75 p-5 shadow-[0_24px_80px_rgba(72,52,12,0.12)] backdrop-blur">
-                  <h2 className="mb-4 text-2xl font-semibold">Préparation</h2>
-                  <div className="grid gap-4 lg:grid-cols-2">
-                    <div className="rounded-3xl border border-slate-200 bg-amber-50/80 p-4">
-                      <h3 className="mb-2 text-lg font-semibold">Ce qui sera visible en partie</h3>
-                      <ul className="space-y-2 text-sm text-slate-700">
-                        <li>Code du salon, scores, plateau, chevalet, chat et journal.</li>
-                        <li>Les contrôles de création et de join disparaissent pendant la partie.</li>
-                        <li>Le panneau de configuration du lobby disparaît aussi après le lancement.</li>
-                      </ul>
-                    </div>
-                    <div className="rounded-3xl border border-slate-200 bg-cyan-50/80 p-4">
-                      <h3 className="mb-2 text-lg font-semibold">Aide aux coups légaux</h3>
-                      <p className="text-sm leading-6 text-slate-700">
-                        Si l’option est activée, les humains peuvent ouvrir ou masquer à volonté un panneau compact des coups
-                        légaux. Si elle est désactivée, aucun bouton d’aide n’apparaît en partie.
-                      </p>
-                    </div>
-                  </div>
-                  {error ? <div className="mt-4"><InlineError message={error} /></div> : null}
-                </section>
-              </>
+      <div className="rounded-[28px] bg-slate-50 p-4">
+        <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="text-xl font-bold text-slate-900">Chevalet</h3>
+            <p className="text-sm text-slate-500">Glisse-dépose pour réfléchir plus facilement. Clic droit pour préparer un échange.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {showLegalMovesFeature ? (
+              <button
+                className="rounded-2xl bg-white px-4 py-3 font-semibold text-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                onClick={toggleLegalMovesPanel}
+                disabled={!myTurn}
+              >
+                {showLegalMovesPanel ? "Masquer les coups légaux" : "Afficher les coups légaux"}
+              </button>
+            ) : null}
+            <button
+              className="rounded-2xl bg-white px-4 py-3 font-semibold text-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={exchangeTiles}
+              disabled={!myTurn || exchangeSelection.length === 0}
+            >
+              Échanger {exchangeSelection.length > 0 ? `(${exchangeSelection.length})` : ""}
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-4 gap-3 sm:grid-cols-7">
+          {myRack.map((tile) => {
+            const isPlaced = tentativePlacements.some((placement) => placement.tileId === tile.id);
+            const inExchange = exchangeSelection.includes(tile.id);
+            return (
+              <RackTile
+                key={tile.id}
+                tile={tile}
+                disabled={!myTurn || isPlaced}
+                selected={selectedTileId === tile.id}
+                exchange={inExchange}
+                onSelect={() => {
+                  if (isPlaced) {
+                    return;
+                  }
+                  setSelectedTileId(selectedTileId === tile.id ? null : tile.id);
+                }}
+                onToggleExchange={() => {
+                  if (!myTurn || isPlaced) {
+                    return;
+                  }
+                  setExchangeSelection((current) =>
+                    current.includes(tile.id) ? current.filter((id) => id !== tile.id) : [...current, tile.id]
+                  );
+                }}
+                onDragStart={() => {
+                  if (!myTurn || isPlaced) {
+                    return;
+                  }
+                  setDraggedTileId(tile.id);
+                }}
+                onDragEnd={() => setDraggedTileId(null)}
+              />
+            );
+          })}
+        </div>
+      </div>
+
+      {showLegalMovesFeature && showLegalMovesPanel ? (
+        <section className="rounded-[28px] bg-slate-50 p-4">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div>
+              <h3 className="text-xl font-bold text-slate-900">Coups légaux</h3>
+              <p className="text-sm text-slate-500">Grille compacte. Clique une carte pour préparer le coup.</p>
+            </div>
+            <button className="rounded-2xl bg-white px-4 py-3 font-semibold text-slate-800" onClick={requestLegalMoves} disabled={!myTurn}>
+              Rafraîchir
+            </button>
+          </div>
+          <div className="grid gap-3 lg:grid-cols-2">
+            {legalMoves.map((move) => (
+              <LegalMoveCard
+                key={`${move.summary}-${move.score}`}
+                move={move}
+                onApply={() => {
+                  setTentativePlacements(move.placements);
+                  setSelectedTileId(null);
+                  setDraggedTileId(null);
+                }}
+              />
+            ))}
+          </div>
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
+function ConversationPanel({
+  view,
+  mode,
+  onCycleMode,
+  onPause,
+  isHost,
+  feedRef,
+  items,
+  expandedConversationId,
+  onToggleConversationItem,
+  chatDraft,
+  setChatDraft,
+  onSendChat
+}: {
+  view: RoomView;
+  mode: ConversationMode;
+  onCycleMode: () => void;
+  onPause: () => void;
+  isHost: boolean;
+  feedRef: React.RefObject<HTMLDivElement | null>;
+  items: ConversationItem[];
+  expandedConversationId: string | null;
+  onToggleConversationItem: (id: string) => void;
+  chatDraft: string;
+  setChatDraft: (value: string) => void;
+  onSendChat: () => void;
+}) {
+  return (
+    <aside className="min-w-0 flex min-h-0 flex-col overflow-hidden rounded-[28px] bg-white p-4 shadow-xl shadow-slate-200/80">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold uppercase tracking-[0.28em] text-slate-400">Conversation</p>
+          <h2 className="text-2xl font-bold text-slate-900">Conversation des agents</h2>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button className="rounded-2xl bg-slate-100 px-4 py-3 text-sm font-semibold text-slate-700" onClick={onCycleMode}>
+            Mode: {modeLabel(mode)}
+          </button>
+          <button
+            className="rounded-2xl bg-indigo-600 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-indigo-300"
+            onClick={onPause}
+            disabled={!isHost || view.status === "lobby" || view.game.finished}
+          >
+            {view.paused ? "Reprendre" : "Pause"}
+          </button>
+        </div>
+      </div>
+
+      <div ref={feedRef} className="min-w-0 min-h-0 flex-1 overflow-y-auto overflow-x-hidden rounded-[24px] bg-slate-50 p-3">
+        <div className="grid gap-3">
+          {items.map((item) =>
+            item.type === "chat" ? (
+              <ChatRow key={item.id} message={item.message} />
             ) : (
-              <>
-                <section className="min-w-0 rounded-[28px] border border-white/50 bg-white/75 p-5 shadow-[0_24px_80px_rgba(72,52,12,0.12)] backdrop-blur">
-                  <div className="mx-auto grid w-full max-w-[1080px] gap-5">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div>
-                        <p className="text-xs uppercase tracking-[0.28em] text-orange-700">Partie</p>
-                        <h2 className="text-2xl font-semibold">Tour {view.game.turn}</h2>
-                        <p className="text-sm text-slate-600">
-                          Sac {view.game.bagCount} · {boardTitle}
-                        </p>
-                      </div>
-                      <div className="flex flex-wrap gap-3">
-                        <button
-                          className="rounded-2xl bg-cyan-700 px-4 py-3 font-semibold text-white transition hover:bg-cyan-800 disabled:cursor-not-allowed disabled:bg-cyan-300"
-                          onClick={submitMove}
-                          disabled={!myTurn || tentativePlacements.length === 0}
-                        >
-                          Jouer
-                        </button>
-                        <button
-                          className="rounded-2xl bg-slate-200 px-4 py-3 font-semibold text-slate-800 transition hover:bg-slate-300 disabled:cursor-not-allowed disabled:opacity-50"
-                          onClick={clearDraftMove}
-                          disabled={tentativePlacements.length === 0}
-                        >
-                          Effacer
-                        </button>
-                        <button
-                          className="rounded-2xl bg-slate-200 px-4 py-3 font-semibold text-slate-800 transition hover:bg-slate-300 disabled:cursor-not-allowed disabled:opacity-50"
-                          onClick={passTurn}
-                          disabled={!myTurn}
-                        >
-                          Passer
-                        </button>
-                      </div>
-                    </div>
+              <ConversationTraceCard
+                key={item.id}
+                trace={item.trace}
+                event={item.event}
+                expanded={expandedConversationId === item.id}
+                onToggle={() => onToggleConversationItem(item.id)}
+              />
+            )
+          )}
+          {items.length === 0 ? <div className="rounded-[20px] bg-white px-4 py-3 text-sm text-slate-500">Aucun message pour l’instant.</div> : null}
+        </div>
+      </div>
 
-                    {error ? <InlineError message={error} /> : null}
+      <div className="mt-4 grid gap-3">
+        <input
+          className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none transition focus:border-indigo-500"
+          value={chatDraft}
+          onChange={(event) => setChatDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              onSendChat();
+            }
+          }}
+          placeholder="Écrire un message"
+        />
+        <button className="rounded-2xl bg-indigo-600 px-4 py-3 font-semibold text-white" onClick={onSendChat}>
+          Envoyer
+        </button>
+      </div>
+    </aside>
+  );
+}
 
-                    <Board
-                      board={view.game.board}
-                      tentativePlacements={tentativePlacements}
-                      myRack={myRack}
-                      myTurn={myTurn}
-                      onClickCell={onBoardClick}
-                      onDropTile={placeTileOnCell}
-                      onStartDraggingTile={setDraggedTileId}
-                      draggedTileId={draggedTileId}
-                    />
+function LeaderboardCard({ player }: { player: PlayerSeat }) {
+  return (
+    <div
+      className={`rounded-[24px] border p-4 ${
+        player.isCurrentTurn ? "border-indigo-400 bg-indigo-50" : "border-slate-200 bg-slate-50"
+      }`}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <ModelLogo seat={player} size="lg" />
+          <div>
+            <p className="font-bold text-slate-900">{player.name}</p>
+            <p className="text-sm text-slate-500">{player.kind === "agent" ? "Agent" : "Humain"}</p>
+          </div>
+        </div>
+        <p className="text-3xl font-black text-slate-900">{player.score}</p>
+      </div>
+    </div>
+  );
+}
 
-                    <div className="rounded-3xl border border-slate-200 bg-amber-50/80 p-4">
-                      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-                        <div>
-                          <h3 className="text-lg font-semibold">Chevalet</h3>
-                          <p className="text-sm text-slate-600">
-                            Clique une tuile puis une case, ou glisse-dépose sur le plateau. Clic droit pour préparer un échange.
-                          </p>
-                        </div>
-                        <div className="flex flex-wrap gap-3">
-                          {showLegalMovesFeature ? (
-                            <button
-                              className="rounded-2xl bg-slate-200 px-4 py-3 font-semibold text-slate-800 transition hover:bg-slate-300 disabled:cursor-not-allowed disabled:opacity-50"
-                              onClick={toggleLegalMovesPanel}
-                              disabled={!myTurn}
-                            >
-                              {showLegalMovesPanel ? "Masquer les coups légaux" : "Afficher les coups légaux"}
-                            </button>
-                          ) : null}
-                          <button
-                            className="rounded-2xl bg-slate-200 px-4 py-3 font-semibold text-slate-800 transition hover:bg-slate-300 disabled:cursor-not-allowed disabled:opacity-50"
-                            onClick={exchangeTiles}
-                            disabled={!myTurn || exchangeSelection.length === 0}
-                          >
-                            Échanger {exchangeSelection.length > 0 ? `(${exchangeSelection.length})` : ""}
-                          </button>
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-4 gap-3 sm:grid-cols-7">
-                        {myRack.map((tile) => {
-                          const isPlaced = tentativePlacements.some((placement) => placement.tileId === tile.id);
-                          const inExchange = exchangeSelection.includes(tile.id);
-                          return (
-                            <RackTile
-                              key={tile.id}
-                              tile={tile}
-                              disabled={!myTurn || isPlaced}
-                              selected={selectedTileId === tile.id}
-                              exchange={inExchange}
-                              onSelect={() => {
-                                if (isPlaced) {
-                                  return;
-                                }
-                                setSelectedTileId((current) => (current === tile.id ? null : tile.id));
-                              }}
-                              onToggleExchange={() => {
-                                if (!myTurn || isPlaced) {
-                                  return;
-                                }
-                                setExchangeSelection((current) =>
-                                  current.includes(tile.id) ? current.filter((id) => id !== tile.id) : [...current, tile.id]
-                                );
-                              }}
-                              onDragStart={() => {
-                                if (!myTurn || isPlaced) {
-                                  return;
-                                }
-                                setDraggedTileId(tile.id);
-                              }}
-                              onDragEnd={() => setDraggedTileId(null)}
-                            />
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    {showLegalMovesFeature && showLegalMovesPanel ? (
-                      <section className="rounded-3xl border border-cyan-200 bg-cyan-50/80 p-4">
-                        <div className="mb-3 flex items-center justify-between gap-3">
-                          <div>
-                            <h3 className="text-lg font-semibold">Coups légaux</h3>
-                            <p className="text-sm text-slate-600">Affichage compact en grille. Clique une carte pour préparer le coup.</p>
-                          </div>
-                          <button
-                            className="rounded-2xl bg-white px-4 py-3 font-semibold text-slate-800 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
-                            onClick={requestLegalMoves}
-                            disabled={!myTurn}
-                          >
-                            Rafraîchir
-                          </button>
-                        </div>
-                        <div className="grid gap-3 md:grid-cols-2">
-                          {legalMoves.map((move) => (
-                            <LegalMoveCard
-                              key={`${move.summary}-${move.score}`}
-                              move={move}
-                              onApply={() => {
-                                setTentativePlacements(move.placements);
-                                setSelectedTileId(null);
-                              }}
-                            />
-                          ))}
-                        </div>
-                      </section>
-                    ) : null}
-                  </div>
-                </section>
-
-                <aside className="min-w-0 grid gap-4 xl:grid-cols-2">
-                  <section className="rounded-[28px] border border-white/50 bg-white/75 p-5 shadow-[0_24px_80px_rgba(72,52,12,0.12)] backdrop-blur">
-                    <div className="mb-4 flex items-center justify-between gap-3">
-                      <h2 className="text-2xl font-semibold">Scores</h2>
-                      {view.game.finished ? (
-                        <span className="rounded-full bg-orange-100 px-3 py-1 text-sm font-semibold text-orange-700">Terminé</span>
-                      ) : null}
-                    </div>
-                    <div className="grid gap-3">
-                      {view.game.players.map((player) => (
-                        <div
-                          key={player.id}
-                          className={`rounded-2xl border px-4 py-3 ${
-                            player.isCurrentTurn ? "border-cyan-400 bg-cyan-50" : "border-slate-200 bg-slate-50"
-                          }`}
-                        >
-                          <div className="flex items-center justify-between gap-3">
-                            <div>
-                              <p className="font-semibold">{player.name}</p>
-                              <p className="text-sm text-slate-600">
-                                {player.kind === "agent" ? "Agent" : "Humain"} · {player.rackCount} tuiles
-                              </p>
-                            </div>
-                            <p className="text-2xl font-bold">{player.score}</p>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </section>
-
-                  {view.agentTraces.length > 0 ? (
-                    <section className="min-w-0 overflow-hidden rounded-[28px] border border-white/50 bg-white/75 p-5 shadow-[0_24px_80px_rgba(72,52,12,0.12)] backdrop-blur xl:col-span-2">
-                      <h2 className="mb-4 text-2xl font-semibold">Trace agents</h2>
-                      <div className="grid gap-3">
-                        {view.agentTraces.map((trace) => (
-                          <AgentTracePanel
-                            key={trace.playerId}
-                            trace={trace}
-                            open={openTraceIds.includes(trace.playerId)}
-                            onToggle={() =>
-                              setOpenTraceIds((current) =>
-                                current.includes(trace.playerId)
-                                  ? current.filter((id) => id !== trace.playerId)
-                                  : [...current, trace.playerId]
-                              )
-                            }
-                          />
-                        ))}
-                      </div>
-                    </section>
-                  ) : null}
-
-                  <section className="rounded-[28px] border border-white/50 bg-white/75 p-5 shadow-[0_24px_80px_rgba(72,52,12,0.12)] backdrop-blur">
-                    <h2 className="mb-4 text-2xl font-semibold">Chat</h2>
-                    <div className="grid max-h-[320px] gap-3 overflow-auto pr-1">
-                      {view.chat.map((message) => (
-                        <ChatBubble key={message.id} message={message} />
-                      ))}
-                    </div>
-                    <div className="mt-4 grid gap-3">
-                      <input
-                        className="rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-cyan-600"
-                        value={chatDraft}
-                        onChange={(event) => setChatDraft(event.target.value)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter") {
-                            sendChat();
-                          }
-                        }}
-                        placeholder="Écrire un message"
-                      />
-                      <button
-                        className="rounded-2xl bg-cyan-700 px-4 py-3 font-semibold text-white transition hover:bg-cyan-800"
-                        onClick={sendChat}
-                      >
-                        Envoyer
-                      </button>
-                    </div>
-                  </section>
-
-                  <section className="rounded-[28px] border border-white/50 bg-white/75 p-5 shadow-[0_24px_80px_rgba(72,52,12,0.12)] backdrop-blur">
-                    <h2 className="mb-4 text-2xl font-semibold">Journal</h2>
-                    <div className="grid max-h-[320px] gap-3 overflow-auto pr-1">
-                      {view.logs.map((log) => (
-                        <div key={log.id} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                          <p className="font-semibold">{log.playerName}</p>
-                          <p className="text-sm text-slate-600">{log.summary}</p>
-                        </div>
-                      ))}
-                    </div>
-                  </section>
-                </aside>
-              </>
-            )}
-          </main>
+function RoomCard({ room, onWatch, onJoin }: { room: RoomSummary; onWatch: () => void; onJoin: (() => void) | null }) {
+  return (
+    <div className="grid gap-4 rounded-[24px] bg-slate-50 p-5">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold uppercase tracking-[0.28em] text-slate-400">Salle</p>
+          <h3 className="text-2xl font-bold text-slate-900">{room.roomId}</h3>
+        </div>
+        <span className={`rounded-full px-3 py-1 text-sm font-semibold ${roomStatusBadge(room.status)}`}>{roomStatusLabel(room.status)}</span>
+      </div>
+      <div className="grid gap-2">
+        {room.seatSummaries.filter((seat) => seat.enabled).map((seat) => (
+          <div key={seat.id} className="flex items-center justify-between rounded-2xl bg-white px-4 py-3">
+            <div className="flex items-center gap-3">
+              <ModelLogo seat={seat} size="sm" />
+              <div>
+                <p className="font-semibold text-slate-900">{seat.name}</p>
+                <p className="text-sm text-slate-500">{seat.kind === "agent" ? "Agent" : "Humain"}</p>
+              </div>
+            </div>
+            <span className="text-sm font-semibold text-slate-500">{seat.score}</span>
+          </div>
+        ))}
+      </div>
+      <div className="flex items-center justify-between gap-3 text-sm text-slate-500">
+        <span>{room.spectatorCount} spectateur(s)</span>
+        <span>{room.currentTurnPlayerName ? `À ${room.currentTurnPlayerName}` : "En attente"}</span>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <button className="rounded-2xl bg-indigo-600 px-4 py-3 font-semibold text-white" onClick={onWatch}>
+          Regarder
+        </button>
+        {onJoin ? (
+          <button className="rounded-2xl bg-slate-200 px-4 py-3 font-semibold text-slate-800" onClick={onJoin}>
+            Rejoindre
+          </button>
         ) : null}
       </div>
     </div>
   );
 }
 
-function InlineError({ message }: { message: string }) {
-  return (
-    <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
-      {message}
-    </div>
-  );
-}
-
-function Board({
+function BoardGrid({
   board,
   tentativePlacements,
   myRack,
@@ -790,54 +1386,56 @@ function Board({
   draggedTileId: string | null;
 }) {
   return (
-    <div
-      className="mx-auto grid w-full max-w-[1080px] gap-1 rounded-[22px] bg-slate-700 p-2"
-      style={{ gridTemplateColumns: "repeat(15, minmax(0, 1fr))" }}
-    >
-      {board.flat().map((cell) => {
-        const tentative = tentativePlacements.find((placement) => placement.row === cell.row && placement.col === cell.col);
-        const tile = cell.tile
-          ? cell.tile
-          : tentative
-            ? {
-                ...myRack.find((rackTile) => rackTile.id === tentative.tileId),
-                assignedLetter: tentative.letter
-              }
-            : null;
+    <div className="mx-auto w-full max-w-[600px] overflow-x-auto">
+      <div
+        className="grid min-w-[500px] gap-1 rounded-[20px] bg-slate-700 p-1.5"
+        style={{ gridTemplateColumns: "repeat(15, minmax(0, 1fr))" }}
+      >
+        {board.flat().map((cell) => {
+          const tentative = tentativePlacements.find((placement) => placement.row === cell.row && placement.col === cell.col);
+          const tile = cell.tile
+            ? cell.tile
+            : tentative
+              ? {
+                  ...myRack.find((rackTile) => rackTile.id === tentative.tileId),
+                  assignedLetter: tentative.letter
+                }
+              : null;
 
-        return (
-          <button
-            key={`${cell.row}-${cell.col}`}
-            className={`aspect-square min-h-[24px] rounded-lg border text-[10px] font-semibold transition md:text-xs ${
-              bonusClasses(cell.bonus)
-            } ${tentative ? "ring-2 ring-cyan-500" : ""}`}
-            onClick={() => onClickCell(cell)}
-            onDragOver={(event) => {
-              if (myTurn && draggedTileId && !cell.tile) {
+          return (
+            <button
+              key={`${cell.row}-${cell.col}`}
+              className={`aspect-square min-h-[24px] rounded-md border text-[9px] font-semibold transition ${bonusClasses(cell.bonus)} ${
+                tentative ? "ring-2 ring-indigo-500" : ""
+              }`}
+              onClick={() => onClickCell(cell)}
+              onDragOver={(event) => {
+                if (myTurn && draggedTileId && !cell.tile) {
+                  event.preventDefault();
+                }
+              }}
+              onDrop={(event) => {
                 event.preventDefault();
-              }
-            }}
-            onDrop={(event) => {
-              event.preventDefault();
-              if (draggedTileId) {
-                onDropTile(draggedTileId, cell);
-                onStartDraggingTile(null);
-              }
-            }}
-          >
-            {tile ? (
-              <span className="flex h-full flex-col items-center justify-center rounded-md bg-amber-200 px-0.5 text-slate-900 shadow-inner">
-                <span className="text-sm font-bold md:text-base">{tile.blank ? tile.assignedLetter : tile.letter}</span>
-                <span className="text-[10px]">{tile.value}</span>
-              </span>
-            ) : (
-              <span className="flex h-full items-center justify-center text-[9px] uppercase tracking-wide text-slate-700">
-                {labelBonus(cell.bonus)}
-              </span>
-            )}
-          </button>
-        );
-      })}
+                if (draggedTileId) {
+                  onDropTile(draggedTileId, cell);
+                  onStartDraggingTile(null);
+                }
+              }}
+            >
+              {tile ? (
+                <span className="flex h-full flex-col items-center justify-center rounded-md bg-amber-200 px-0.5 text-slate-900 shadow-inner">
+                  <span className="text-[13px] font-bold md:text-sm">{tile.blank ? tile.assignedLetter : tile.letter}</span>
+                  <span className="text-[9px] leading-none">{tile.value}</span>
+                </span>
+              ) : (
+                <span className="flex h-full items-center justify-center text-[8px] uppercase tracking-[0.08em] text-slate-700">
+                  {labelBonus(cell.bonus)}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -878,32 +1476,18 @@ function RackTile({
         onToggleExchange();
       }}
       disabled={disabled}
-      className={`min-h-[86px] rounded-[20px] border px-2 py-2 text-slate-900 shadow-sm transition ${
-        selected ? "border-cyan-500 ring-2 ring-cyan-500" : "border-amber-300"
+      className={`min-h-[78px] rounded-[18px] border px-2 py-2 text-slate-900 shadow-sm transition ${
+        selected ? "border-indigo-500 ring-2 ring-indigo-500" : "border-amber-300"
       } ${exchange ? "bg-orange-200" : "bg-gradient-to-b from-amber-100 to-amber-300"} ${
         disabled ? "cursor-not-allowed opacity-50" : "hover:-translate-y-0.5"
       }`}
     >
       <span className="flex h-full flex-col items-center justify-between">
-        <span className="text-2xl font-bold">{tile.blank ? "?" : tile.letter}</span>
-        <span className="text-sm font-semibold">{tile.value}</span>
+        <span className="text-[26px] font-bold leading-none">{tile.blank ? "?" : tile.letter}</span>
+        <span className="text-xs font-semibold">{tile.value}</span>
       </span>
     </button>
   );
-}
-
-function defaultBaseUrlForProvider(provider: AgentConfig["provider"]): string {
-  switch (provider) {
-    case "openrouter":
-      return "https://openrouter.ai/api/v1/chat/completions";
-    case "ollama":
-      return "http://127.0.0.1:11434/api/chat";
-    case "google":
-      return "";
-    case "openai_compatible":
-    default:
-      return "http://127.0.0.1:1234/v1/chat/completions";
-  }
 }
 
 function SeatEditor({
@@ -937,14 +1521,20 @@ function SeatEditor({
   }, [seat.id, seat.name, seat.agentConfig?.provider, seat.agentConfig?.model, seat.agentConfig?.baseUrl, seat.agentConfig?.apiKey, seat.agentConfig?.systemPrompt]);
 
   return (
-    <div className={`grid gap-3 rounded-3xl border p-4 ${seat.enabled ? "border-slate-200 bg-slate-50" : "border-slate-200/70 bg-slate-100/60 opacity-60"}`}>
+    <div className={`grid gap-3 rounded-[24px] border p-4 ${seat.enabled ? "border-slate-200 bg-slate-50" : "border-slate-200 bg-slate-100/70 opacity-60"}`}>
       <div className="flex items-center justify-between gap-3">
-        <strong className="text-lg">Siège {seat.seatIndex + 1}</strong>
-        <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+        <div className="flex items-center gap-3">
+          <ModelLogo seat={seat} size="lg" />
+          <div>
+            <strong className="block text-lg text-slate-900">Siège {seat.seatIndex + 1}</strong>
+            <p className="text-sm text-slate-500">{seat.kind === "agent" ? "Agent IA" : "Joueur humain"}</p>
+          </div>
+        </div>
+        <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
           Actif
           <input
             type="checkbox"
-            className="h-5 w-5 rounded border-slate-300 text-cyan-700"
+            className="h-5 w-5 rounded border-slate-300 text-indigo-600"
             checked={seat.enabled}
             disabled={disabled}
             onChange={(event) => onChange(seat, { enabled: event.target.checked })}
@@ -952,7 +1542,7 @@ function SeatEditor({
         </label>
       </div>
 
-      <label className="grid gap-2 text-sm font-medium text-slate-700">
+      <label className="grid gap-2 text-sm font-semibold text-slate-700">
         Type
         <select
           className="rounded-2xl border border-slate-200 bg-white px-4 py-3"
@@ -965,7 +1555,7 @@ function SeatEditor({
         </select>
       </label>
 
-      <label className="grid gap-2 text-sm font-medium text-slate-700">
+      <label className="grid gap-2 text-sm font-semibold text-slate-700">
         Nom
         <input
           className="rounded-2xl border border-slate-200 bg-white px-4 py-3"
@@ -980,19 +1570,9 @@ function SeatEditor({
         />
       </label>
 
-      <p className="text-sm text-slate-600">
-        {seat.kind === "human"
-          ? seat.ownerClientId
-            ? seat.connected
-              ? "Humain connecté"
-              : "Humain déconnecté"
-            : "En attente d’un joueur"
-          : "Agent autonome"}
-      </p>
-
       {seat.kind === "agent" ? (
         <>
-          <label className="grid gap-2 text-sm font-medium text-slate-700">
+          <label className="grid gap-2 text-sm font-semibold text-slate-700">
             Fournisseur
             <select
               className="rounded-2xl border border-slate-200 bg-white px-4 py-3"
@@ -1019,7 +1599,7 @@ function SeatEditor({
             </select>
           </label>
 
-          <label className="grid gap-2 text-sm font-medium text-slate-700">
+          <label className="grid gap-2 text-sm font-semibold text-slate-700">
             Modèle
             <input
               className="rounded-2xl border border-slate-200 bg-white px-4 py-3"
@@ -1034,10 +1614,10 @@ function SeatEditor({
             />
           </label>
 
-          <label className="flex items-center gap-3 text-sm font-medium text-slate-700">
+          <label className="flex items-center gap-3 text-sm font-semibold text-slate-700">
             <input
               type="checkbox"
-              className="h-5 w-5 rounded border-slate-300 text-cyan-700"
+              className="h-5 w-5 rounded border-slate-300 text-indigo-600"
               checked={Boolean(agentConfig.allowLegalMoves)}
               disabled={disabled}
               onChange={(event) =>
@@ -1049,7 +1629,7 @@ function SeatEditor({
             Autoriser cet agent à demander les coups possibles
           </label>
 
-          <label className="grid gap-2 text-sm font-medium text-slate-700">
+          <label className="grid gap-2 text-sm font-semibold text-slate-700">
             Base URL
             <input
               className="rounded-2xl border border-slate-200 bg-white px-4 py-3"
@@ -1064,7 +1644,7 @@ function SeatEditor({
             />
           </label>
 
-          <label className="grid gap-2 text-sm font-medium text-slate-700">
+          <label className="grid gap-2 text-sm font-semibold text-slate-700">
             API key
             <input
               className="rounded-2xl border border-slate-200 bg-white px-4 py-3"
@@ -1079,10 +1659,10 @@ function SeatEditor({
             />
           </label>
 
-          <label className="grid gap-2 text-sm font-medium text-slate-700">
+          <label className="grid gap-2 text-sm font-semibold text-slate-700">
             Prompt système
             <textarea
-              className="min-h-[100px] rounded-2xl border border-slate-200 bg-white px-4 py-3"
+              className="min-h-[120px] rounded-2xl border border-slate-200 bg-white px-4 py-3"
               value={draftSystemPrompt}
               disabled={disabled}
               onChange={(event) => setDraftSystemPrompt(event.target.value)}
@@ -1099,85 +1679,90 @@ function SeatEditor({
   );
 }
 
-function AgentTracePanel({
+function ConversationTraceCard({
   trace,
-  open,
+  event,
+  expanded,
   onToggle
 }: {
   trace: AgentTrace;
-  open: boolean;
+  event: AgentTraceEvent;
+  expanded: boolean;
   onToggle: () => void;
 }) {
+  const styles = traceEventClasses(event);
   return (
-    <div className="min-w-0 overflow-hidden rounded-3xl border border-slate-200 bg-slate-50">
-      <button className="flex w-full items-center justify-between gap-3 px-4 py-4 text-left" onClick={onToggle}>
-        <div>
-          <p className="font-semibold">{trace.playerName}</p>
-          <p className="text-sm text-slate-600">
-            {trace.provider} · {trace.model}
-          </p>
+    <div className={`min-w-0 overflow-hidden rounded-[22px] border p-3 ${styles.card}`}>
+      <button className="flex min-w-0 w-full items-start gap-3 text-left" onClick={onToggle}>
+        <ModelLogo trace={trace} size="sm" />
+        <div className="min-w-0 flex-1">
+          <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-sm font-bold text-slate-900">{trace.playerName}</p>
+              <p className="text-xs text-slate-500">{event.title}</p>
+            </div>
+            <span className={`rounded-full px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] ${styles.badge}`}>
+              {event.kind}
+            </span>
+          </div>
+          <div
+            className={`overflow-hidden break-words whitespace-pre-wrap text-sm leading-6 ${styles.content}`}
+            style={
+              expanded
+                ? undefined
+                : {
+                    display: "-webkit-box",
+                    WebkitBoxOrient: "vertical",
+                    WebkitLineClamp: 3 as number
+                  }
+            }
+          >
+            {event.content || "(vide)"}
+          </div>
         </div>
-        <span className="rounded-full bg-cyan-100 px-3 py-1 text-xs font-semibold text-cyan-800">
-          {open ? "Masquer" : "Afficher"}
-        </span>
       </button>
-      {open ? (
-        <div className="grid max-h-[62vh] gap-3 overflow-y-auto border-t border-slate-200 px-4 py-4 pr-2">
-          <AgentTraceEvents events={trace.events} />
+      {expanded ? (
+        <div className="max-w-full overflow-x-auto rounded-[18px] bg-white/60 p-3">
+          <pre className={`min-w-max whitespace-pre text-xs leading-5 ${styles.content}`}>{event.content || "(vide)"}</pre>
         </div>
       ) : null}
     </div>
   );
 }
 
-function AgentTraceEvents({ events }: { events: AgentTrace["events"] }) {
-  const [expandedEventId, setExpandedEventId] = useState<string | null>(events.at(-1)?.id ?? null);
-
-  useEffect(() => {
-    setExpandedEventId(events.at(-1)?.id ?? null);
-  }, [events]);
-
+function ChatRow({ message }: { message: ChatMessage }) {
+  const outgoing = message.kind === "agent";
   return (
-    <div className="min-w-0 grid gap-3">
-      {events.map((event) => {
-        const styles = traceEventClasses(event);
-        const expanded = expandedEventId === event.id;
-        return (
-          <div key={event.id} className={`min-w-0 overflow-hidden rounded-2xl border p-3 ${styles.card}`}>
-            <button
-              className="flex min-w-0 w-full items-start justify-between gap-3 text-left"
-              onClick={() => setExpandedEventId((current) => (current === event.id ? null : event.id))}
-            >
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-semibold">{event.title}</p>
-                <div
-                  className={`mt-1 overflow-hidden break-all whitespace-normal text-xs leading-5 ${styles.content}`}
-                  style={{
-                    display: "-webkit-box",
-                    WebkitBoxOrient: "vertical",
-                    WebkitLineClamp: 3 as number
-                  }}
-                >
-                  {event.content || "(vide)"}
-                </div>
-              </div>
-              <div className="flex shrink-0 items-center gap-2">
-                <span className={`rounded-full px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] ${styles.badge}`}>
-                  {event.kind}
-                </span>
-                <span className="text-xs font-semibold text-slate-500">{expanded ? "−" : "+"}</span>
-              </div>
-            </button>
-            {expanded ? (
-              <div className="mt-3 max-w-full overflow-x-auto rounded-xl border border-white/60 bg-white/60 p-3">
-                <pre className={`min-w-max whitespace-pre text-xs leading-5 ${styles.content}`}>{event.content}</pre>
-              </div>
-            ) : null}
-          </div>
-        );
-      })}
+    <div className={`flex gap-3 ${outgoing ? "flex-row" : "flex-row-reverse"}`}>
+      <ModelLogo name={message.authorName} size="sm" />
+      <div
+        className={`max-w-[85%] rounded-[22px] px-4 py-3 shadow-sm ${
+          outgoing ? "rounded-tl-none bg-indigo-600 text-white" : "rounded-tr-none bg-white text-slate-800"
+        }`}
+      >
+        <p className={`text-xs font-bold ${outgoing ? "text-indigo-100" : "text-slate-400"}`}>{message.authorName}</p>
+        <p className="mt-1 text-sm leading-6 whitespace-pre-wrap break-words">{message.text}</p>
+      </div>
     </div>
   );
+}
+
+function ModelLogo({
+  seat,
+  trace,
+  name,
+  size
+}: {
+  seat?: Pick<PlayerSeat, "name" | "kind" | "agentConfig"> | Pick<RoomSummary["seatSummaries"][number], "name" | "kind">;
+  trace?: Pick<AgentTrace, "playerName" | "provider" | "model">;
+  name?: string;
+  size: "sm" | "lg";
+}) {
+  const model = "agentConfig" in (seat ?? {}) ? seat?.agentConfig?.model : trace?.model;
+  const provider = "agentConfig" in (seat ?? {}) ? seat?.agentConfig?.provider : trace?.provider;
+  const resolvedName = seat?.name ?? trace?.playerName ?? name ?? "Agent";
+  const src = getModelLogo({ model, provider, name: resolvedName });
+  return <img src={src} alt={resolvedName} className={`${size === "lg" ? "h-12 w-12" : "h-10 w-10"} rounded-2xl border border-slate-200 bg-white p-1 object-contain`} />;
 }
 
 function LegalMoveCard({ move, onApply }: { move: LegalMove; onApply: () => void }) {
@@ -1189,24 +1774,24 @@ function LegalMoveCard({ move, onApply }: { move: LegalMove; onApply: () => void
 
   return (
     <button
-      className="grid gap-3 rounded-3xl border border-cyan-200 bg-white p-3 text-left transition hover:-translate-y-0.5 hover:border-cyan-400"
+      className="grid gap-3 rounded-[24px] bg-white p-4 text-left transition hover:-translate-y-0.5 hover:shadow-md"
       onClick={onApply}
     >
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-sm font-semibold text-slate-900">{move.formedWords.join(", ")}</p>
+          <p className="text-lg font-bold text-slate-900">{move.formedWords.join(", ")}</p>
           <p className="text-xs text-slate-500">
-            {anchor ? `${anchor.row + 1},${anchor.col + 1}` : ""} · {isHorizontal ? "horizontal" : "vertical"}
+            {anchor ? `row ${anchor.row}, col ${anchor.col}` : ""} · {isHorizontal ? "horizontal" : "vertical"}
           </p>
         </div>
-        <span className="rounded-full bg-cyan-100 px-3 py-1 text-sm font-bold text-cyan-800">{move.score}</span>
+        <span className="rounded-full bg-indigo-100 px-3 py-1 text-sm font-bold text-indigo-700">{move.score}</span>
       </div>
       <div className="flex flex-wrap items-start gap-3">
-        <div className={`flex rounded-2xl bg-slate-100 p-2 ${isHorizontal ? "flex-row gap-1" : "flex-col gap-1"}`}>
+        <div className={`flex rounded-[18px] bg-slate-100 p-2 ${isHorizontal ? "flex-row gap-1" : "flex-col gap-1"}`}>
           {orderedPlacements.map((placement) => (
             <div
               key={`${placement.row}-${placement.col}`}
-              className="flex h-9 w-9 items-center justify-center rounded-xl bg-white text-sm font-bold text-slate-700 shadow-sm"
+              className="flex h-10 w-10 items-center justify-center rounded-xl bg-white text-sm font-bold text-slate-700 shadow-sm"
             >
               {placement.letter ?? "?"}
             </div>
@@ -1214,105 +1799,68 @@ function LegalMoveCard({ move, onApply }: { move: LegalMove; onApply: () => void
         </div>
         <div className="grid content-start gap-1 text-[11px] text-slate-500">
           <span>{move.summary}</span>
-          <span>{move.placements.length} tuile(s) posée(s)</span>
+          <span>{move.placements.length} tuile(s)</span>
         </div>
       </div>
     </button>
   );
 }
 
-function ChatBubble({ message }: { message: ChatMessage }) {
-  const palette =
-    message.kind === "agent"
-      ? "border-cyan-200 bg-cyan-50"
-      : message.kind === "system"
-        ? "border-orange-200 bg-orange-50"
-        : "border-slate-200 bg-slate-50";
-
-  return (
-    <div className={`rounded-2xl border px-4 py-3 ${palette}`}>
-      <p className="font-semibold">{message.authorName}</p>
-      <p className="mt-1 text-sm leading-6 text-slate-700">{message.text}</p>
-    </div>
-  );
+function InlineError({ message }: { message: string }) {
+  return <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">{message}</div>;
 }
 
-function traceEventClasses(event: AgentTrace["events"][number]): { card: string; badge: string; content: string } {
-  const lowerContent = event.content.toLowerCase();
-  const isError =
-    lowerContent.includes("error") ||
-    lowerContent.includes("invalide") ||
-    lowerContent.includes("introuvable") ||
-    lowerContent.includes("impossible") ||
-    lowerContent.includes("pas autoris") ||
-    lowerContent.includes("echec");
-  const isSuccess =
-    lowerContent.includes("points") ||
-    lowerContent.includes("message envoyé") ||
-    lowerContent.includes("passe son tour") ||
-    lowerContent.includes("échang") ||
-    lowerContent.includes("jouable");
-
-  switch (event.kind) {
-    case "tool_call":
-      return {
-        card: "border-cyan-200 bg-cyan-50",
-        badge: "bg-cyan-100 text-cyan-800",
-        content: "text-cyan-950"
-      };
-    case "tool_result":
-      if (isError) {
-        return {
-          card: "border-red-200 bg-red-50",
-          badge: "bg-red-100 text-red-700",
-          content: "text-red-900"
-        };
-      }
-      if (isSuccess) {
-        return {
-          card: "border-emerald-200 bg-emerald-50",
-          badge: "bg-emerald-100 text-emerald-700",
-          content: "text-emerald-950"
-        };
-      }
-      return {
-        card: "border-amber-200 bg-amber-50",
-        badge: "bg-amber-100 text-amber-700",
-        content: "text-amber-950"
-      };
-    case "reasoning":
-      return {
-        card: "border-violet-200 bg-violet-50",
-        badge: "bg-violet-100 text-violet-700",
-        content: "text-violet-950"
-      };
-    case "provider_reply":
-      return {
-        card: "border-slate-200 bg-white",
-        badge: "bg-slate-100 text-slate-600",
-        content: "text-slate-700"
-      };
-    case "context":
-      return {
-        card: "border-sky-200 bg-sky-50",
-        badge: "bg-sky-100 text-sky-700",
-        content: "text-sky-950"
-      };
-    case "status":
-      return {
-        card: isError ? "border-orange-200 bg-orange-50" : "border-slate-200 bg-slate-50",
-        badge: isError ? "bg-orange-100 text-orange-700" : "bg-slate-100 text-slate-600",
-        content: isError ? "text-orange-950" : "text-slate-700"
-      };
-    default:
-      return {
-        card: "border-slate-200 bg-white",
-        badge: "bg-slate-100 text-slate-600",
-        content: "text-slate-700"
-      };
+function ensureSocketReady(socket: ClientSocket, clientId: string, displayName: string, callback?: () => void) {
+  socket.auth = {
+    clientId,
+    displayName
+  };
+  if (socket.connected) {
+    callback?.();
+    return;
+  }
+  socket.once("connect", () => callback?.());
+  if (!socket.active) {
+    socket.connect();
   }
 }
 
+function parseRoute(pathname: string): Route {
+  const match = pathname.match(/^\/rooms\/([^/]+)$/);
+  if (match) {
+    return { page: "room", roomId: decodeURIComponent(match[1]) };
+  }
+  return { page: "home" };
+}
+
+function navigateTo(setRoute: (route: Route) => void, path: string) {
+  window.history.pushState({}, "", path);
+  setRoute(parseRoute(path));
+}
+
+function getOrCreateClientId(): string {
+  const existing = localStorage.getItem(CLIENT_ID_KEY);
+  if (existing) {
+    return existing;
+  }
+  const next = crypto.randomUUID();
+  localStorage.setItem(CLIENT_ID_KEY, next);
+  return next;
+}
+
+function defaultBaseUrlForProvider(provider: AgentConfig["provider"]): string {
+  switch (provider) {
+    case "openrouter":
+      return "https://openrouter.ai/api/v1/chat/completions";
+    case "ollama":
+      return "http://127.0.0.1:11434/api/chat";
+    case "google":
+      return "";
+    case "openai_compatible":
+    default:
+      return "http://127.0.0.1:1234/v1/chat/completions";
+  }
+}
 
 function bonusClasses(bonus: BoardCell["bonus"]): string {
   switch (bonus) {
@@ -1348,12 +1896,205 @@ function labelBonus(bonus: BoardCell["bonus"]): string {
   }
 }
 
-function getOrCreateClientId(): string {
-  const existing = localStorage.getItem(CLIENT_ID_KEY);
-  if (existing) {
-    return existing;
+function getModelLogo({ model, provider, name }: { model?: string; provider?: AgentProvider; name?: string }): string {
+  const key = `${model ?? ""} ${provider ?? ""} ${name ?? ""}`.toLowerCase();
+  if (key.includes("glm")) return "/logos/z-ai-logo.png";
+  if (key.includes("gpt") || key.includes("openai")) return "/logos/openai-Logo.png";
+  if (key.includes("claude") || key.includes("anthropic")) return "/logos/claude-logo.png";
+  if (key.includes("gemini") || key.includes("google")) return "/logos/Gemini-logo.png";
+  if (key.includes("deepseek")) return "/logos/deepseek_logo.png";
+  if (key.includes("grok") || key.includes("xai")) return "/logos/grok_logo.png";
+  if (key.includes("minimax")) return "/logos/MiniMax_logo.png";
+  return "/logos/z-ai-logo.png";
+}
+
+function getActiveTracePlayerId(traces: AgentTrace[]): string | null {
+  return [...traces].sort((left, right) => right.updatedAt - left.updatedAt)[0]?.playerId ?? null;
+}
+
+function buildConversationFeed(view: RoomView | null, mode: ConversationMode, activeTracePlayerId: string | null): ConversationItem[] {
+  if (!view) {
+    return [];
   }
-  const next = crypto.randomUUID();
-  localStorage.setItem(CLIENT_ID_KEY, next);
-  return next;
+
+  const chatItems: ConversationItem[] = view.chat.map((message) => ({
+    id: `chat:${message.id}`,
+    createdAt: message.createdAt,
+    type: "chat",
+    message
+  }));
+
+  const traceItems: ConversationItem[] = view.agentTraces.flatMap((trace) =>
+    trace.events
+      .filter((event) => shouldShowTraceEvent(mode, trace.playerId, activeTracePlayerId, event))
+      .map((event) => ({
+        id: `trace:${trace.playerId}:${event.id}`,
+        createdAt: event.createdAt,
+        type: "trace" as const,
+        trace,
+        event
+      }))
+  );
+
+  return [...chatItems, ...traceItems].sort((left, right) => left.createdAt - right.createdAt);
+}
+
+function shouldShowTraceEvent(
+  mode: ConversationMode,
+  playerId: string,
+  activeTracePlayerId: string | null,
+  event: AgentTraceEvent
+): boolean {
+  if (event.kind === "context" || event.kind === "prompt") {
+    return false;
+  }
+
+  if (mode === "dev") {
+    return true;
+  }
+
+  if (mode === "advanced") {
+    return event.kind === "reasoning" || event.kind === "provider_reply" || event.kind === "status";
+  }
+
+  return playerId === activeTracePlayerId && (event.kind === "reasoning" || event.kind === "provider_reply" || event.kind === "status");
+}
+
+function mergeTraceDelta(current: RoomView | null, payload: AgentTraceDelta): RoomView | null {
+  if (!current) {
+    return current;
+  }
+  const traceIndex = current.agentTraces.findIndex((trace) => trace.playerId === payload.playerId);
+  if (traceIndex === -1) {
+    return current;
+  }
+  const nextTraces = current.agentTraces.map((trace, index) =>
+    index === traceIndex
+      ? {
+          ...trace,
+          updatedAt: payload.event.createdAt,
+          events: [...trace.events.filter((event) => event.id !== payload.event.id), payload.event].sort((left, right) => left.createdAt - right.createdAt)
+        }
+      : trace
+  );
+  return {
+    ...current,
+    agentTraces: nextTraces
+  };
+}
+
+function mergeTraceChunk(current: RoomView | null, payload: AgentTraceChunk): RoomView | null {
+  if (!current) {
+    return current;
+  }
+  const nextTraces = current.agentTraces.map((trace) => {
+    if (trace.playerId !== payload.playerId) {
+      return trace;
+    }
+    return {
+      ...trace,
+      updatedAt: Date.now(),
+      events: trace.events.map((event) =>
+        event.id === payload.eventId
+          ? {
+              ...event,
+              content: event.content + payload.append,
+              createdAt: Date.now()
+            }
+          : event
+      )
+    };
+  });
+  return {
+    ...current,
+    agentTraces: nextTraces
+  };
+}
+
+function nextConversationMode(mode: ConversationMode): ConversationMode {
+  if (mode === "user") return "advanced";
+  if (mode === "advanced") return "dev";
+  return "user";
+}
+
+function modeLabel(mode: ConversationMode): string {
+  switch (mode) {
+    case "advanced":
+      return "Advanced";
+    case "dev":
+      return "Dev";
+    case "user":
+    default:
+      return "User";
+  }
+}
+
+function roomStatusLabel(status: RoomSummary["status"] | RoomView["status"]): string {
+  switch (status) {
+    case "lobby":
+      return "Lobby";
+    case "paused":
+      return "Pause";
+    case "finished":
+      return "Terminée";
+    case "live":
+    default:
+      return "En cours";
+  }
+}
+
+function roomStatusBadge(status: RoomSummary["status"]): string {
+  switch (status) {
+    case "lobby":
+      return "bg-slate-100 text-slate-700";
+    case "paused":
+      return "bg-amber-100 text-amber-700";
+    case "finished":
+      return "bg-emerald-100 text-emerald-700";
+    case "live":
+    default:
+      return "bg-indigo-100 text-indigo-700";
+  }
+}
+
+function traceEventClasses(event: AgentTraceEvent): { card: string; badge: string; content: string } {
+  const lowerContent = event.content.toLowerCase();
+  const isError =
+    lowerContent.includes("error") ||
+    lowerContent.includes("invalide") ||
+    lowerContent.includes("introuvable") ||
+    lowerContent.includes("impossible") ||
+    lowerContent.includes("pas autoris") ||
+    lowerContent.includes("échec");
+  const isSuccess =
+    lowerContent.includes("points") ||
+    lowerContent.includes("message envoyé") ||
+    lowerContent.includes("passe son tour") ||
+    lowerContent.includes("échang") ||
+    lowerContent.includes("jouable");
+
+  switch (event.kind) {
+    case "tool_call":
+      return { card: "border-cyan-200 bg-cyan-50", badge: "bg-cyan-100 text-cyan-800", content: "text-cyan-950" };
+    case "tool_result":
+      if (isError) {
+        return { card: "border-red-200 bg-red-50", badge: "bg-red-100 text-red-700", content: "text-red-900" };
+      }
+      if (isSuccess) {
+        return { card: "border-emerald-200 bg-emerald-50", badge: "bg-emerald-100 text-emerald-700", content: "text-emerald-950" };
+      }
+      return { card: "border-amber-200 bg-amber-50", badge: "bg-amber-100 text-amber-700", content: "text-amber-950" };
+    case "reasoning":
+      return { card: "border-violet-200 bg-violet-50", badge: "bg-violet-100 text-violet-700", content: "text-violet-950" };
+    case "provider_reply":
+      return { card: "border-slate-200 bg-white", badge: "bg-slate-100 text-slate-600", content: "text-slate-700" };
+    case "status":
+      return {
+        card: isError ? "border-orange-200 bg-orange-50" : "border-slate-200 bg-slate-50",
+        badge: isError ? "bg-orange-100 text-orange-700" : "bg-slate-100 text-slate-600",
+        content: isError ? "text-orange-950" : "text-slate-700"
+      };
+    default:
+      return { card: "border-slate-200 bg-white", badge: "bg-slate-100 text-slate-600", content: "text-slate-700" };
+  }
 }
