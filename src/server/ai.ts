@@ -27,6 +27,7 @@ interface AgentRoomContext {
   roomId: string;
   signal: AbortSignal;
   isPaused: () => boolean;
+  logDiagnostic: (type: string, payload: Record<string, unknown>) => void;
   getPublicTimeline: () => PublicTimelineEntry[];
   pushChat: (playerId: string, text: string) => ChatMessage;
   beginTrace: (trace: AgentTrace) => void;
@@ -376,17 +377,18 @@ async function callProvider(
   config: AgentConfig,
   messages: ConversationMessage[],
   signal: AbortSignal,
-  callbacks: ProviderCallbacks
+  callbacks: ProviderCallbacks,
+  diagnostics?: (type: string, payload: Record<string, unknown>) => void
 ): Promise<ProviderReply> {
   switch (config.provider) {
     case "openai_compatible":
-      return callOpenAICompatible(config, messages, signal, callbacks);
+      return callOpenAICompatible(config, messages, signal, callbacks, diagnostics);
     case "openrouter":
-      return callOpenRouter(config, messages, signal, callbacks);
+      return callOpenRouter(config, messages, signal, callbacks, diagnostics);
     case "google":
-      return callGoogle(config, messages, signal, callbacks);
+      return callGoogle(config, messages, signal, callbacks, diagnostics);
     case "ollama":
-      return callOllama(config, messages, signal, callbacks);
+      return callOllama(config, messages, signal, callbacks, diagnostics);
     default:
       throw new Error("Unsupported provider");
   }
@@ -396,7 +398,8 @@ async function callOpenAICompatible(
   config: AgentConfig,
   messages: ConversationMessage[],
   signal: AbortSignal,
-  callbacks: ProviderCallbacks
+  callbacks: ProviderCallbacks,
+  diagnostics?: (type: string, payload: Record<string, unknown>) => void
 ): Promise<ProviderReply> {
   const baseUrl = config.baseUrl || process.env.OPENAI_COMPAT_BASE_URL || "http://127.0.0.1:1234/v1/chat/completions";
   const headers: Record<string, string> = {
@@ -407,10 +410,18 @@ async function callOpenAICompatible(
     headers.Authorization = `Bearer ${apiKey}`;
   }
 
+  const requestSignal = withTimeout(signal, 90_000);
+  diagnostics?.("provider_request_started", {
+    provider: "openai_compatible",
+    url: baseUrl,
+    model: config.model,
+    messageCount: messages.length
+  });
+
   const response = await fetch(baseUrl, {
     method: "POST",
     headers,
-    signal,
+    signal: requestSignal,
     body: JSON.stringify({
       model: config.model,
       temperature: config.temperature ?? 0.2,
@@ -423,27 +434,43 @@ async function callOpenAICompatible(
     throw new Error(`OpenAI-compatible error ${response.status}`);
   }
 
-  return readSseResponse(response, callbacks);
+  diagnostics?.("provider_response_headers", {
+    provider: "openai_compatible",
+    contentType: response.headers.get("content-type") ?? null,
+    status: response.status
+  });
+
+  return readProviderResponse(response, callbacks, requestSignal, diagnostics);
 }
 
 async function callOpenRouter(
   config: AgentConfig,
   messages: ConversationMessage[],
   signal: AbortSignal,
-  callbacks: ProviderCallbacks
+  callbacks: ProviderCallbacks,
+  diagnostics?: (type: string, payload: Record<string, unknown>) => void
 ): Promise<ProviderReply> {
   const apiKey = config.apiKey || process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
     throw new Error("Missing OPENROUTER_API_KEY");
   }
 
-  const response = await fetch(config.baseUrl || "https://openrouter.ai/api/v1/chat/completions", {
+  const requestSignal = withTimeout(signal, 90_000);
+  const url = config.baseUrl || "https://openrouter.ai/api/v1/chat/completions";
+  diagnostics?.("provider_request_started", {
+    provider: "openrouter",
+    url,
+    model: config.model,
+    messageCount: messages.length
+  });
+
+  const response = await fetch(url, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json"
     },
-    signal,
+    signal: requestSignal,
     body: JSON.stringify({
       model: config.model,
       temperature: config.temperature ?? 0.2,
@@ -456,14 +483,21 @@ async function callOpenRouter(
     throw new Error(`OpenRouter error ${response.status}`);
   }
 
-  return readSseResponse(response, callbacks);
+  diagnostics?.("provider_response_headers", {
+    provider: "openrouter",
+    contentType: response.headers.get("content-type") ?? null,
+    status: response.status
+  });
+
+  return readProviderResponse(response, callbacks, requestSignal, diagnostics);
 }
 
 async function callGoogle(
   config: AgentConfig,
   messages: ConversationMessage[],
   signal: AbortSignal,
-  callbacks: ProviderCallbacks
+  callbacks: ProviderCallbacks,
+  diagnostics?: (type: string, payload: Record<string, unknown>) => void
 ): Promise<ProviderReply> {
   const apiKey = config.apiKey || process.env.GOOGLE_API_KEY;
   if (!apiKey) {
@@ -472,14 +506,22 @@ async function callGoogle(
 
   const model = config.model || "gemini-2.5-flash";
   const [systemMessage, ...restMessages] = messages;
+  const requestSignal = withTimeout(signal, 90_000);
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${apiKey}`;
+  diagnostics?.("provider_request_started", {
+    provider: "google",
+    url,
+    model,
+    messageCount: messages.length
+  });
   const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${apiKey}`,
+    url,
     {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
       },
-      signal,
+      signal: requestSignal,
       body: JSON.stringify({
         systemInstruction: {
           parts: [{ text: systemMessage?.content ?? "" }]
@@ -499,6 +541,12 @@ async function callGoogle(
     throw new Error(`Google AI error ${response.status}`);
   }
 
+  diagnostics?.("provider_response_headers", {
+    provider: "google",
+    contentType: response.headers.get("content-type") ?? null,
+    status: response.status
+  });
+
   const data = (await response.json()) as {
     candidates?: Array<{
       content?: {
@@ -508,7 +556,7 @@ async function callGoogle(
   };
 
   const text = data.candidates?.[0]?.content?.parts?.map((part) => part.text ?? "").join("") ?? "";
-  await emitBufferedChunks(text, callbacks.onTextChunk, signal);
+  await emitBufferedChunks(text, callbacks.onTextChunk, requestSignal);
   return { text };
 }
 
@@ -516,14 +564,24 @@ async function callOllama(
   config: AgentConfig,
   messages: ConversationMessage[],
   signal: AbortSignal,
-  callbacks: ProviderCallbacks
+  callbacks: ProviderCallbacks,
+  diagnostics?: (type: string, payload: Record<string, unknown>) => void
 ): Promise<ProviderReply> {
-  const response = await fetch(config.baseUrl || "http://127.0.0.1:11434/api/chat", {
+  const requestSignal = withTimeout(signal, 90_000);
+  const url = config.baseUrl || "http://127.0.0.1:11434/api/chat";
+  diagnostics?.("provider_request_started", {
+    provider: "ollama",
+    url,
+    model: config.model,
+    messageCount: messages.length
+  });
+
+  const response = await fetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
     },
-    signal,
+    signal: requestSignal,
     body: JSON.stringify({
       model: config.model,
       stream: true,
@@ -537,6 +595,12 @@ async function callOllama(
   if (!response.ok) {
     throw new Error(`Ollama error ${response.status}`);
   }
+
+  diagnostics?.("provider_response_headers", {
+    provider: "ollama",
+    contentType: response.headers.get("content-type") ?? null,
+    status: response.status
+  });
 
   if (!response.body) {
     throw new Error("Ollama response body is missing.");
@@ -553,7 +617,7 @@ async function callOllama(
     if (done) {
       break;
     }
-    throwIfAborted(signal);
+    throwIfAborted(requestSignal);
     buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split("\n");
     buffer = lines.pop() ?? "";
@@ -594,11 +658,23 @@ async function callOllama(
     }
   }
 
+  diagnostics?.("provider_stream_completed", {
+    provider: "ollama",
+    textChars: text.length,
+    reasoningChars: reasoning.length
+  });
+
   return { text, reasoning };
 }
 
-async function readSseResponse(response: Response, callbacks: ProviderCallbacks): Promise<ProviderReply> {
-  if (!response.body) {
+async function readProviderResponse(
+  response: Response,
+  callbacks: ProviderCallbacks,
+  signal: AbortSignal,
+  diagnostics?: (type: string, payload: Record<string, unknown>) => void
+): Promise<ProviderReply> {
+  const contentType = (response.headers.get("content-type") ?? "").toLowerCase();
+  if (!response.body || contentType.includes("application/json")) {
     const data = (await response.json()) as {
       choices?: Array<{ message?: { content?: string; reasoning?: string } }>;
     };
@@ -610,6 +686,11 @@ async function readSseResponse(response: Response, callbacks: ProviderCallbacks)
     if (text) {
       callbacks.onTextChunk(text);
     }
+    diagnostics?.("provider_buffered_response", {
+      contentType,
+      textChars: text.length,
+      reasoningChars: reasoning?.length ?? 0
+    });
     return { text, reasoning };
   }
 
@@ -618,29 +699,27 @@ async function readSseResponse(response: Response, callbacks: ProviderCallbacks)
   let buffer = "";
   let text = "";
   let reasoning = "";
+  let frameCount = 0;
+  let jsonFrameCount = 0;
 
   while (true) {
     const { value, done } = await reader.read();
     if (done) {
       break;
     }
+    throwIfAborted(signal);
     buffer += decoder.decode(value, { stream: true });
-    const frames = buffer.split("\n\n");
+    const frames = splitSseFrames(buffer);
     buffer = frames.pop() ?? "";
     for (const frame of frames) {
-      const lines = frame
-        .split("\n")
-        .map((line) => line.trim())
-        .filter(Boolean);
-      for (const line of lines) {
-        if (!line.startsWith("data:")) {
-          continue;
-        }
-        const payload = line.slice(5).trim();
-        if (!payload || payload === "[DONE]") {
-          continue;
-        }
+      frameCount += 1;
+      const payload = extractSseDataPayload(frame);
+      if (!payload || payload === "[DONE]") {
+        continue;
+      }
+      try {
         const data = JSON.parse(payload) as Record<string, unknown>;
+        jsonFrameCount += 1;
         const { textChunk, reasoningChunk } = extractSseChunks(data);
         if (reasoningChunk) {
           reasoning += reasoningChunk;
@@ -650,9 +729,45 @@ async function readSseResponse(response: Response, callbacks: ProviderCallbacks)
           text += textChunk;
           callbacks.onTextChunk(textChunk);
         }
+      } catch (error) {
+        diagnostics?.("provider_stream_json_parse_failed", {
+          frameCount,
+          payloadPreview: payload.slice(0, 400),
+          error: error instanceof Error ? error.message : String(error)
+        });
       }
     }
   }
+
+  const trailingPayload = extractSseDataPayload(buffer);
+  if (trailingPayload && trailingPayload !== "[DONE]") {
+    try {
+      const data = JSON.parse(trailingPayload) as Record<string, unknown>;
+      jsonFrameCount += 1;
+      const { textChunk, reasoningChunk } = extractSseChunks(data);
+      if (reasoningChunk) {
+        reasoning += reasoningChunk;
+        callbacks.onReasoningChunk(reasoningChunk);
+      }
+      if (textChunk) {
+        text += textChunk;
+        callbacks.onTextChunk(textChunk);
+      }
+    } catch (error) {
+      diagnostics?.("provider_stream_trailing_json_parse_failed", {
+        payloadPreview: trailingPayload.slice(0, 400),
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  diagnostics?.("provider_stream_completed", {
+    contentType,
+    frameCount,
+    jsonFrameCount,
+    textChars: text.length,
+    reasoningChars: reasoning.length
+  });
 
   return {
     text,
@@ -682,6 +797,20 @@ function extractSseChunks(data: Record<string, unknown>): { textChunk: string; r
     "";
 
   return { textChunk, reasoningChunk };
+}
+
+function splitSseFrames(buffer: string): string[] {
+  return buffer.split(/\r?\n\r?\n/g);
+}
+
+function extractSseDataPayload(frame: string): string {
+  return frame
+    .split(/\r?\n/g)
+    .map((line) => line.trimEnd())
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).trimStart())
+    .join("\n")
+    .trim();
 }
 
 function parseToolCommand(rawReply: string): { tool: string; arguments: Record<string, unknown> } | null {
@@ -1059,6 +1188,13 @@ async function emitBufferedChunks(text: string, emit: (chunk: string) => void, s
     emit(part);
     await new Promise((resolve) => setTimeout(resolve, 8));
   }
+}
+
+function withTimeout(signal: AbortSignal, timeoutMs: number): AbortSignal {
+  if (typeof AbortSignal.any === "function" && typeof AbortSignal.timeout === "function") {
+    return AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]);
+  }
+  return signal;
 }
 
 function stringValue(value: unknown): string {

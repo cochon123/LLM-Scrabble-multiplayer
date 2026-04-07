@@ -43,8 +43,8 @@ type PendingAction =
 type Route = { page: "home" } | { page: "room"; roomId: string };
 
 type ConversationItem =
-  | { id: string; createdAt: number; type: "chat"; message: ChatMessage }
-  | { id: string; createdAt: number; type: "trace"; trace: AgentTrace; event: AgentTraceEvent };
+  | { id: string; createdAt: number; order: number; type: "chat"; message: ChatMessage }
+  | { id: string; createdAt: number; order: number; type: "trace"; trace: AgentTrace; event: AgentTraceEvent };
 
 export function App() {
   const [route, setRoute] = useState<Route>(() => parseRoute(window.location.pathname));
@@ -1275,6 +1275,7 @@ function ConversationPanel({
                 trace={item.trace}
                 event={item.event}
                 expanded={expandedConversationId === item.id}
+                rack={view.game.players.find((player) => player.id === item.trace.playerId)?.rack}
                 onToggle={() => onToggleConversationItem(item.id)}
               />
             )
@@ -1683,14 +1684,17 @@ function ConversationTraceCard({
   trace,
   event,
   expanded,
+  rack,
   onToggle
 }: {
   trace: AgentTrace;
   event: AgentTraceEvent;
   expanded: boolean;
+  rack?: Tile[];
   onToggle: () => void;
 }) {
   const styles = traceEventClasses(event);
+  const showRack = Boolean(rack && rack.length > 0 && (event.kind === "reasoning" || event.kind === "provider_reply" || event.kind === "status"));
   return (
     <div className={`min-w-0 overflow-hidden rounded-[22px] border p-3 ${styles.card}`}>
       <button className="flex min-w-0 w-full items-start gap-3 text-left" onClick={onToggle}>
@@ -1719,13 +1723,14 @@ function ConversationTraceCard({
           >
             {event.content || "(vide)"}
           </div>
+          {showRack ? (
+            <div className="mt-3 rounded-[16px] bg-white/60 p-3">
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Chevalet</p>
+              <SmallRack rack={rack ?? []} />
+            </div>
+          ) : null}
         </div>
       </button>
-      {expanded ? (
-        <div className="max-w-full overflow-x-auto rounded-[18px] bg-white/60 p-3">
-          <pre className={`min-w-max whitespace-pre text-xs leading-5 ${styles.content}`}>{event.content || "(vide)"}</pre>
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -1743,6 +1748,22 @@ function ChatRow({ message }: { message: ChatMessage }) {
         <p className={`text-xs font-bold ${outgoing ? "text-indigo-100" : "text-slate-400"}`}>{message.authorName}</p>
         <p className="mt-1 text-sm leading-6 whitespace-pre-wrap break-words">{message.text}</p>
       </div>
+    </div>
+  );
+}
+
+function SmallRack({ rack }: { rack: Tile[] }) {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {rack.map((tile) => (
+        <div
+          key={tile.id}
+          className="flex h-9 w-9 flex-col items-center justify-center rounded-lg border border-amber-300 bg-amber-100 text-slate-900 shadow-sm"
+        >
+          <span className="text-xs font-bold leading-none">{tile.blank ? tile.assignedLetter || "?" : tile.letter}</span>
+          <span className="text-[8px] leading-none">{tile.value}</span>
+        </div>
+      ))}
     </div>
   );
 }
@@ -1920,23 +1941,25 @@ function buildConversationFeed(view: RoomView | null, mode: ConversationMode, ac
   const chatItems: ConversationItem[] = view.chat.map((message) => ({
     id: `chat:${message.id}`,
     createdAt: message.createdAt,
+    order: message.createdAt,
     type: "chat",
     message
   }));
 
-  const traceItems: ConversationItem[] = view.agentTraces.flatMap((trace) =>
+  const traceItems: ConversationItem[] = view.agentTraces.flatMap((trace, traceIndex) =>
     trace.events
       .filter((event) => shouldShowTraceEvent(mode, trace.playerId, activeTracePlayerId, event))
-      .map((event) => ({
+      .map((event, eventIndex) => ({
         id: `trace:${trace.playerId}:${event.id}`,
         createdAt: event.createdAt,
+        order: traceIndex * 10000 + eventIndex,
         type: "trace" as const,
         trace,
         event
       }))
   );
 
-  return [...chatItems, ...traceItems].sort((left, right) => left.createdAt - right.createdAt);
+  return [...chatItems, ...traceItems].sort((left, right) => left.createdAt - right.createdAt || left.order - right.order);
 }
 
 function shouldShowTraceEvent(
@@ -1998,8 +2021,7 @@ function mergeTraceChunk(current: RoomView | null, payload: AgentTraceChunk): Ro
         event.id === payload.eventId
           ? {
               ...event,
-              content: event.content + payload.append,
-              createdAt: Date.now()
+              content: event.content + payload.append
             }
           : event
       )

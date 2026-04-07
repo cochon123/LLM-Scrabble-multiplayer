@@ -117,7 +117,10 @@ export class ScrabbleGame {
         connected: player.connected,
         score: player.score,
         rackCount: player.rack.length,
-        rack: player.id === viewerPlayerId ? player.rack.map((tile) => ({ ...tile })) : undefined,
+        rack:
+          player.id === viewerPlayerId || player.kind === "agent"
+            ? player.rack.map((tile) => ({ ...tile }))
+            : undefined,
         isCurrentTurn: this.getCurrentPlayer()?.id === player.id,
         agentConfig: player.agentConfig
       })),

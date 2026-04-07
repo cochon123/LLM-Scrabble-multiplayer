@@ -671,6 +671,7 @@ export class RoomManager {
         game: room.game,
         signal: room.agentAbortController.signal,
         isPaused: () => room.paused,
+        logDiagnostic: (type, payload) => this.logRoomEvent(room, `agent_provider_${type}`, payload),
         getPublicTimeline: () => room.publicTimeline,
         pushChat: (playerId, text) => this.pushAgentChat(room, playerId, text),
         beginTrace: (trace) => this.beginTrace(room, trace),
@@ -816,8 +817,7 @@ export class RoomManager {
       return;
     }
     event.content += payload.append;
-    event.createdAt = Date.now();
-    trace.updatedAt = event.createdAt;
+    trace.updatedAt = Date.now();
     this.io.to(room.id).emit("agent_trace_chunk", payload);
     if (payload.done) {
       this.logRoomEvent(room, "agent_trace_event", {
