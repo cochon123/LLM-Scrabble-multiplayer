@@ -60,6 +60,16 @@ interface ProviderCallbacks {
   onReasoningChunk: (chunk: string) => void;
 }
 
+class ProviderTransportError extends Error {
+  retryable: boolean;
+
+  constructor(message: string, retryable = false) {
+    super(message);
+    this.name = "ProviderTransportError";
+    this.retryable = retryable;
+  }
+}
+
 export async function runAgentTurn(
   playerId: string,
   agentConfig: AgentConfig | undefined,
@@ -160,7 +170,7 @@ export async function runAgentTurn(
             done: false
           });
         }
-      });
+      }, (type, payload) => context.logDiagnostic(`agent_provider_${type}`, { playerId, ...payload }));
     } catch (error) {
       if (isAbortError(error)) {
         const pausedResult = { done: false, summary: "Tour interrompu par pause.", aborted: true };
@@ -260,6 +270,31 @@ export async function warmUpAgentProvider(agentConfig: AgentConfig | undefined):
         await fetch(baseUrl, {
           method: "POST",
           headers,
+          body: JSON.stringify({
+            model: agentConfig.model,
+            max_tokens: 4,
+            temperature: 0,
+            messages: [
+              { role: "system", content: "Reply with OK." },
+              { role: "user", content: "Warmup" }
+            ]
+          })
+        });
+        return;
+      }
+      case "openrouter": {
+        const apiKey = agentConfig.apiKey || process.env.OPENROUTER_API_KEY;
+        if (!apiKey) {
+          return;
+        }
+        await fetch(agentConfig.baseUrl || "https://openrouter.ai/api/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://scrabble-codex.local",
+            "X-Title": "Scrabble Codex"
+          },
           body: JSON.stringify({
             model: agentConfig.model,
             max_tokens: 4,
@@ -402,45 +437,26 @@ async function callOpenAICompatible(
   diagnostics?: (type: string, payload: Record<string, unknown>) => void
 ): Promise<ProviderReply> {
   const baseUrl = config.baseUrl || process.env.OPENAI_COMPAT_BASE_URL || "http://127.0.0.1:1234/v1/chat/completions";
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json"
-  };
+  const headers: Record<string, string> = { "Content-Type": "application/json", Accept: "text/event-stream, application/json" };
   const apiKey = config.apiKey || process.env.OPENAI_API_KEY;
   if (apiKey) {
     headers.Authorization = `Bearer ${apiKey}`;
   }
 
-  const requestSignal = withTimeout(signal, 90_000);
-  diagnostics?.("provider_request_started", {
-    provider: "openai_compatible",
-    url: baseUrl,
-    model: config.model,
-    messageCount: messages.length
-  });
-
-  const response = await fetch(baseUrl, {
-    method: "POST",
+  return callStreamProviderWithRetries(
+    "openai_compatible",
+    baseUrl,
     headers,
-    signal: requestSignal,
-    body: JSON.stringify({
+    {
       model: config.model,
       temperature: config.temperature ?? 0.2,
       stream: true,
       messages
-    })
-  });
-
-  if (!response.ok) {
-    throw new Error(`OpenAI-compatible error ${response.status}`);
-  }
-
-  diagnostics?.("provider_response_headers", {
-    provider: "openai_compatible",
-    contentType: response.headers.get("content-type") ?? null,
-    status: response.status
-  });
-
-  return readProviderResponse(response, callbacks, requestSignal, diagnostics);
+    },
+    signal,
+    callbacks,
+    diagnostics
+  );
 }
 
 async function callOpenRouter(
@@ -454,42 +470,27 @@ async function callOpenRouter(
   if (!apiKey) {
     throw new Error("Missing OPENROUTER_API_KEY");
   }
-
-  const requestSignal = withTimeout(signal, 90_000);
   const url = config.baseUrl || "https://openrouter.ai/api/v1/chat/completions";
-  diagnostics?.("provider_request_started", {
-    provider: "openrouter",
+  return callStreamProviderWithRetries(
+    "openrouter",
     url,
-    model: config.model,
-    messageCount: messages.length
-  });
-
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
+    {
       Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json"
+      "Content-Type": "application/json",
+      Accept: "text/event-stream, application/json",
+      "HTTP-Referer": "https://scrabble-codex.local",
+      "X-Title": "Scrabble Codex"
     },
-    signal: requestSignal,
-    body: JSON.stringify({
+    {
       model: config.model,
       temperature: config.temperature ?? 0.2,
       stream: true,
       messages
-    })
-  });
-
-  if (!response.ok) {
-    throw new Error(`OpenRouter error ${response.status}`);
-  }
-
-  diagnostics?.("provider_response_headers", {
-    provider: "openrouter",
-    contentType: response.headers.get("content-type") ?? null,
-    status: response.status
-  });
-
-  return readProviderResponse(response, callbacks, requestSignal, diagnostics);
+    },
+    signal,
+    callbacks,
+    diagnostics
+  );
 }
 
 async function callGoogle(
@@ -691,6 +692,9 @@ async function readProviderResponse(
       textChars: text.length,
       reasoningChars: reasoning?.length ?? 0
     });
+    if (!text.trim() && !reasoning?.trim()) {
+      throw new ProviderTransportError("Réponse fournisseur vide ou sans contenu exploitable.", true);
+    }
     return { text, reasoning };
   }
 
@@ -768,6 +772,10 @@ async function readProviderResponse(
     textChars: text.length,
     reasoningChars: reasoning.length
   });
+
+  if (!text.trim() && !reasoning.trim()) {
+    throw new ProviderTransportError("Flux fournisseur terminé sans texte ni reasoning.", true);
+  }
 
   return {
     text,
@@ -1101,12 +1109,17 @@ function describePlayMoveFailure(
   reason: string
 ): string {
   const player = game.getPlayer(playerId);
+  const extraHints: string[] = [];
+  if (reason.includes("Case deja occupee")) {
+    extraHints.push("Indice: tu as probablement renvoyé une lettre de croisement déjà présente sur le plateau. Avec play_move, ne renvoie que les nouvelles tuiles.");
+  }
   const details = [
     `Raison: ${reason}`,
     `Placements tentés: ${formatAttemptedPlacements(attemptedPlacements)}`,
     `Chevalet actuel: ${player ? formatRack(player.rack) : "(joueur introuvable)"}`,
     "Rappel: le jeu se joue en français.",
-    "Rappel: les coordonnées des outils sont 0-indexées."
+    "Rappel: les coordonnées des outils sont 0-indexées.",
+    ...extraHints
   ];
   return `Coup refusé.\n${details.join("\n")}`;
 }
@@ -1232,4 +1245,94 @@ function isAbortError(error: unknown): boolean {
     return true;
   }
   return String(error).includes("AbortError") || String(error).includes("room_paused");
+}
+
+async function callStreamProviderWithRetries(
+  provider: "openai_compatible" | "openrouter",
+  url: string,
+  headers: Record<string, string>,
+  body: Record<string, unknown>,
+  signal: AbortSignal,
+  callbacks: ProviderCallbacks,
+  diagnostics?: (type: string, payload: Record<string, unknown>) => void
+): Promise<ProviderReply> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const requestSignal = withTimeout(signal, 90_000);
+    diagnostics?.("provider_request_started", {
+      provider,
+      url,
+      model: String(body.model ?? ""),
+      messageCount: Array.isArray(body.messages) ? body.messages.length : 0,
+      attempt: attempt + 1
+    });
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers,
+        signal: requestSignal,
+        body: JSON.stringify(body)
+      });
+
+      if (!response.ok) {
+        throw new ProviderTransportError(`${provider} error ${response.status}`, isRetryableStatus(response.status));
+      }
+
+      diagnostics?.("provider_response_headers", {
+        provider,
+        contentType: response.headers.get("content-type") ?? null,
+        status: response.status,
+        attempt: attempt + 1
+      });
+
+      return await readProviderResponse(response, callbacks, requestSignal, diagnostics);
+    } catch (error) {
+      if (isAbortError(error)) {
+        throw error;
+      }
+      lastError = error;
+      const retryable = isRetryableProviderError(error);
+      diagnostics?.("provider_attempt_failed", {
+        provider,
+        attempt: attempt + 1,
+        retryable,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      if (!retryable || attempt === 2) {
+        break;
+      }
+      await delay(350 * (attempt + 1), signal);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
+function isRetryableStatus(status: number): boolean {
+  return status === 408 || status === 409 || status === 425 || status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+}
+
+function isRetryableProviderError(error: unknown): boolean {
+  if (error instanceof ProviderTransportError) {
+    return error.retryable;
+  }
+  if (error instanceof TypeError) {
+    return true;
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  return /ECONNRESET|socket hang up|network|fetch failed/i.test(message);
+}
+
+async function delay(ms: number, signal: AbortSignal): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timeout);
+      signal.removeEventListener("abort", onAbort);
+      reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
 }
