@@ -13,6 +13,6 @@
     "declaration": false,
     "sourceMap": true
   },
-  "include": ["src/server", "src/shared"],
+  "include": ["src/server", "src/shared", "src/bench"],
   "exclude": ["src/**/*.test.ts"]
 }

@@ -2,3 +2,6 @@ dist/
 dist-server/
 node_modules/
 runtime-logs/
+runtime-bench/
+__pycache__/
+*.pyc
