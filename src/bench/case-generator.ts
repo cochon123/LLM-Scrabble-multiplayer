@@ -16,7 +16,7 @@ export interface BenchmarkExpectedCell {
 export interface BenchmarkCase {
   case_id: string;
   difficulty: BenchmarkDifficulty;
-  provider_prompt_language: "fr";
+  provider_prompt_language: "en";
   board_before: string[][];
   board_after: string[][];
   rack: string[];
@@ -113,34 +113,34 @@ const DIFFICULTY_CONFIG: Record<BenchmarkDifficulty, DifficultyConfig> = {
 
 const LETTER_COMMONNESS: Record<string, number> = {
   E: 13,
+  T: 12,
   A: 12,
+  O: 11,
   I: 11,
-  S: 11,
   N: 10,
-  R: 10,
-  T: 9,
-  O: 9,
+  S: 10,
+  H: 9,
+  R: 9,
+  D: 8,
   L: 8,
-  U: 8,
-  D: 7,
   C: 7,
-  M: 7,
-  P: 6,
-  V: 5,
+  U: 7,
+  M: 6,
+  W: 6,
+  F: 5,
   G: 5,
-  F: 4,
+  Y: 5,
+  P: 4,
   B: 4,
-  H: 3,
-  Q: 3,
+  V: 3,
+  K: 3,
   J: 2,
   X: 2,
-  Y: 2,
-  Z: 2,
-  K: 1,
-  W: 1
+  Q: 1,
+  Z: 1
 };
 
-const DEFAULT_DICTIONARY_PATH = "public/dictionary/fr-large.txt";
+const DEFAULT_DICTIONARY_PATH = "public/dictionary/en-large.txt";
 
 export async function generateDataset(options: GenerateDatasetOptions): Promise<BenchmarkCase[]> {
   validateSplit(options);
@@ -156,7 +156,7 @@ export async function generateDataset(options: GenerateDatasetOptions): Promise<
     while (cases.filter((item) => item.difficulty === difficulty).length < targetCount) {
       attempts += 1;
       if (attempts > Math.max(200, targetCount * 500)) {
-        throw new Error(`Generation bloquee pour la difficulte ${difficulty}. Essayez un autre seed ou un split plus petit.`);
+        throw new Error(`Generation stalled for difficulty ${difficulty}. Try another seed or a smaller split.`);
       }
       const index = cases.length + 1;
       const generated = generateSingleCase(dictionary, pools, difficulty, index, random);
@@ -198,7 +198,7 @@ export function getDefaultDictionaryPath(): string {
 function validateSplit(options: GenerateDatasetOptions): void {
   const expected = options.simple + options.medium + options.hard;
   if (expected !== options.count) {
-    throw new Error(`Le total simple+medium+hard (${expected}) doit être égal à count (${options.count}).`);
+    throw new Error(`The total simple+medium+hard (${expected}) must equal count (${options.count}).`);
   }
 }
 
@@ -334,7 +334,7 @@ function createBenchmarkCase(
   return {
     case_id: `case_${String(index).padStart(6, "0")}`,
     difficulty,
-    provider_prompt_language: "fr",
+    provider_prompt_language: "en",
     board_before: boardBefore,
     board_after: boardAfter,
     rack: targetWord.split(""),
@@ -427,7 +427,7 @@ function tryBuildTargetCase(
           return {
             case_id: `case_${String(index).padStart(6, "0")}`,
             difficulty,
-            provider_prompt_language: "fr",
+            provider_prompt_language: "en",
             board_before: boardBefore,
             board_after: boardAfter,
             rack: word.split(""),

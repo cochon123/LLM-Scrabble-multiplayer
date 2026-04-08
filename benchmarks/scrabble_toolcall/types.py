@@ -37,7 +37,7 @@ class BenchmarkExpectedCell(TypedDict):
 class BenchmarkCase(TypedDict):
     case_id: str
     difficulty: Difficulty
-    provider_prompt_language: Literal["fr"]
+    provider_prompt_language: Literal["en"]
     board_before: list[list[str]]
     board_after: list[list[str]]
     rack: list[str]

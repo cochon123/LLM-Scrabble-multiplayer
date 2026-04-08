@@ -42,7 +42,7 @@ def generate_dataset_via_ts(
     medium: int = 200,
     hard: int = 100,
     seed: int = 1,
-    dictionary: str = "public/dictionary/fr-large.txt",
+    dictionary: str = "public/dictionary/en-large.txt",
 ) -> None:
     root = Path(__file__).resolve().parents[2]
     command = [

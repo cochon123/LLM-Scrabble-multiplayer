@@ -32,7 +32,7 @@ def build_parser() -> argparse.ArgumentParser:
     generate.add_argument("--hard", type=int, default=100)
     generate.add_argument("--out", required=True)
     generate.add_argument("--seed", type=int, default=1)
-    generate.add_argument("--dictionary", default="public/dictionary/fr-large.txt")
+    generate.add_argument("--dictionary", default="public/dictionary/en-large.txt")
 
     run = subparsers.add_parser("run")
     run.add_argument("--provider", choices=["openai_compatible", "google"], default="openai_compatible")

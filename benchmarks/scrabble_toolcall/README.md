@@ -1,23 +1,24 @@
 # Scrabble Tool-Call Benchmark
 
-CLI Python pour comparer des techniques de sortie structurée sur une tâche guidée de placement Scrabble.
+Python CLI for comparing structured output techniques on a guided Scrabble placement task.
 
-## Ce que mesure la V1
+## What V1 measures
 
-- board donné
-- rack donné
-- mot cible donné
-- le modèle doit rendre la position exacte des lettres
+- given board
+- given rack
+- given target word
+- the model must return the exact letter positions
 
-Le benchmark mesure la précision du schéma de sortie, pas la stratégie Scrabble.
+The benchmark measures output-technique accuracy, not general Scrabble strategy.
 
 ## Techniques
 
 - `placements_json`
 - `board_matrix_full`
 - `delta_sparse`
+- `line_slots`
 
-## Générer un dataset
+## Generate a dataset
 
 ```bash
 python3 -m benchmarks.scrabble_toolcall.cli generate-dataset \
@@ -28,7 +29,10 @@ python3 -m benchmarks.scrabble_toolcall.cli generate-dataset \
   --out runtime-bench/scrabble-toolcall/datasets/default-500.jsonl
 ```
 
-## Lancer un benchmark local OpenAI-compatible
+Default dictionary:
+- `public/dictionary/en-large.txt`
+
+## Run a local OpenAI-compatible benchmark
 
 ```bash
 python3 -m benchmarks.scrabble_toolcall.cli run \
@@ -41,7 +45,7 @@ python3 -m benchmarks.scrabble_toolcall.cli run \
   --out runtime-bench/scrabble-toolcall/runs/local-qwen35
 ```
 
-## Générer le rapport
+## Generate a report
 
 ```bash
 python3 -m benchmarks.scrabble_toolcall.cli report \
@@ -50,6 +54,6 @@ python3 -m benchmarks.scrabble_toolcall.cli report \
 
 ## Notes
 
-- la concurrence est plafonnée à `5`
-- les détails de diff sont affichés par défaut seulement sur échec
-- les graphes sont écrits dans `charts/`
+- concurrency is capped at `5`
+- board diffs are shown by default only on failures
+- charts are written to `charts/`

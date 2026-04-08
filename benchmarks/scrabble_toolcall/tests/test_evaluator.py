@@ -8,7 +8,7 @@ from benchmarks.scrabble_toolcall.evaluator import evaluate_raw_response
 CASE = {
     "case_id": "case_000001",
     "difficulty": "simple",
-    "provider_prompt_language": "fr",
+    "provider_prompt_language": "en",
     "board_before": [["_" for _ in range(15)] for _ in range(15)],
     "board_after": [["_" for _ in range(15)] for _ in range(15)],
     "rack": ["M", "A"],

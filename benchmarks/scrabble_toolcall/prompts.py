@@ -6,14 +6,14 @@ from .types import BenchmarkCase, TechniqueName
 
 
 COMMON_RULES = (
-    "Scrabble fr. row/col 0-indexed. "
-    "Place exactement le mot donne. "
-    "Un seul JSON, sans markdown. "
-    "Ne modifie pas les lettres existantes. "
-    "N'invente pas de lettres hors rack."
+    "English Scrabble. row/col are 0-indexed. "
+    "Place the exact target word. "
+    "Return one JSON object only, no markdown. "
+    "Do not modify existing letters. "
+    "Do not invent letters outside the rack."
 )
 
-LEGEND = "Legende board: .=vide @=2w #=3w +=2l *=3l lettres=cases deja occupees."
+LEGEND = "Board legend: .=empty @=2w #=3w +=2l *=3l letters=already occupied cells."
 
 BONUS_TO_CHAR = {
     "_": ".",
@@ -58,8 +58,8 @@ def _placement_directive(case: BenchmarkCase) -> str:
         f"start_row={case['expected_move']['start_row']}\n"
         f"start_col={case['expected_move']['start_col']}\n"
         f"direction={direction}\n"
-        "Le board indique deja quelles cases sont occupees. "
-        "Si le mot croise une lettre deja presente, conserve-la et ne la re-emets pas dans une sortie sparse."
+        "The board already shows which cells are occupied. "
+        "If the word crosses an existing letter, keep it and do not re-emit it in a sparse output."
     )
 
 
@@ -103,15 +103,15 @@ def build_board_matrix_case_block(case: BenchmarkCase) -> str:
 
 def build_placements_prompt(case: BenchmarkCase) -> str:
     example = (
-        'Exemple croisement: mot=CAT, start_row=0, start_col=1, direction=vertical, '
-        'le board contient deja A en row=1,col=1. '
-        'Reponse:{"tool":"play_move","arguments":{"placements":'
+        'Example crossing: word=CAT, start_row=0, start_col=1, direction=vertical, '
+        'the board already contains A at row=1,col=1. '
+        'Response:{"tool":"play_move","arguments":{"placements":'
         '[{"row":0,"col":1,"letter":"C"},{"row":2,"col":1,"letter":"T"}]}}'
     )
     return (
         f"{COMMON_RULES}\n"
-        "Technique=placements_json. Retourne seulement les nouvelles lettres. "
-        "Si le mot croise une lettre deja sur le plateau, ne renvoie pas cette lettre.\n"
+        "Technique=placements_json. Return only newly placed letters. "
+        "If the word crosses a letter already on the board, do not output that letter.\n"
         f"{example}\n"
         f"{build_sparse_case_block(case)}"
     )
@@ -119,16 +119,16 @@ def build_placements_prompt(case: BenchmarkCase) -> str:
 
 def build_board_matrix_prompt(case: BenchmarkCase) -> str:
     example = (
-        'Exemple croisement: board=[["_","_","_"],["_","A","_"],["_","_","_"]] '
-        'et mot=CAT start_row=0 start_col=1 direction=vertical. '
-        'Reponse:{"tool":"play_board","arguments":{"board":'
+        'Example crossing: board=[["_","_","_"],["_","A","_"],["_","_","_"]] '
+        'and word=CAT start_row=0 start_col=1 direction=vertical. '
+        'Response:{"tool":"play_board","arguments":{"board":'
         ' [["_","C","_"],["_","A","_"],["_","T","_"]]}}'
     )
     return (
         f"{COMMON_RULES}\n"
-        'Technique=board_matrix_full. Sortie=matrice 15x15 avec "_","2w","3w","2l","3l" ou lettres. '
-        "Si tu poses sur un bonus, remplace le bonus par la lettre. "
-        "Important: en sortie, utilise UNIQUEMENT les tokens canoniques _,2w,3w,2l,3l et pas les symboles compactes.\n"
+        'Technique=board_matrix_full. Output a 15x15 matrix using "_","2w","3w","2l","3l" or letters. '
+        "If you place on a bonus, replace the bonus token with the letter. "
+        "Important: in the output, use ONLY the canonical tokens _,2w,3w,2l,3l and not the compact symbols.\n"
         f"{example}\n"
         f"{build_board_matrix_case_block(case)}"
     )
@@ -136,15 +136,15 @@ def build_board_matrix_prompt(case: BenchmarkCase) -> str:
 
 def build_delta_sparse_prompt(case: BenchmarkCase) -> str:
     example = (
-        'Exemple croisement: mot=CAT, start_row=0, start_col=1, direction=vertical, '
-        'le board contient deja A en row=1,col=1. '
-        'Reponse:{"tool":"play_delta","arguments":{"cells":'
+        'Example crossing: word=CAT, start_row=0, start_col=1, direction=vertical, '
+        'the board already contains A at row=1,col=1. '
+        'Response:{"tool":"play_delta","arguments":{"cells":'
         '[{"row":0,"col":1,"value":"C"},{"row":2,"col":1,"value":"T"}]}}'
     )
     return (
         f"{COMMON_RULES}\n"
-        "Technique=delta_sparse. Retourne seulement les cellules modifiees. "
-        "Si le mot croise une lettre deja sur le plateau, ne renvoie pas cette lettre.\n"
+        "Technique=delta_sparse. Return only modified cells. "
+        "If the word crosses a letter already on the board, do not output that letter.\n"
         f"{example}\n"
         f"{build_sparse_case_block(case)}"
     )
@@ -153,16 +153,16 @@ def build_delta_sparse_prompt(case: BenchmarkCase) -> str:
 def build_line_slots_prompt(case: BenchmarkCase) -> str:
     expected_length = len(_line_slots(case))
     example = (
-        'Exemple croisement: mot=CAT, start_row=0, start_col=1, direction=vertical, '
-        'le board contient deja A en row=1,col=1. '
-        'Reponse:{"tool":"play_line","arguments":{"start_row":0,"start_col":1,"direction":"vertical","slots":["C","=","T"]}}'
+        'Example crossing: word=CAT, start_row=0, start_col=1, direction=vertical, '
+        'the board already contains A at row=1,col=1. '
+        'Response:{"tool":"play_line","arguments":{"start_row":0,"start_col":1,"direction":"vertical","slots":["C","=","T"]}}'
     )
     return (
         f"{COMMON_RULES}\n"
-        "Technique=line_slots. Retourne un segment ordonne de longueur exacte du mot. "
-        "Chaque element de slots correspond a une case consecutive du mot. "
-        "Utilise une lettre majuscule pour une nouvelle tuile et '=' pour une lettre deja presente sur le plateau. "
-        "Ne renvoie jamais les bonus dans slots.\n"
+        "Technique=line_slots. Return an ordered segment with the exact word length. "
+        "Each slot item corresponds to one consecutive board cell along the word path. "
+        "Use an uppercase letter for a newly placed tile and '=' for a letter already present on the board. "
+        "Never return bonus tokens inside slots.\n"
         f"{example}\n"
         f"slots_length={expected_length}\n"
         f"{build_sparse_case_block(case)}"
