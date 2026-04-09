@@ -91,7 +91,9 @@ export async function runAgentTurn(
     return runFallbackTurn(playerId, context, false);
   }
 
-  const systemPrompt = resolveAgentSystemPrompt(agentConfig.systemPrompt);
+  const systemPrompt = resolveAgentSystemPrompt(agentConfig.systemPrompt, {
+    allowLegalMoves: agentConfig.allowLegalMoves
+  });
   const legalMovesAllowed = Boolean(agentConfig.allowLegalMoves);
   context.beginTrace({
     playerId,
@@ -1199,7 +1201,9 @@ function runFallbackTurn(playerId: string, context: AgentRoomContext, legalMoves
     provider: player.agentConfig?.provider ?? "openai_compatible",
     model: player.agentConfig?.model ?? "fallback",
     updatedAt: Date.now(),
-    systemPrompt: resolveAgentSystemPrompt(player.agentConfig?.systemPrompt),
+    systemPrompt: resolveAgentSystemPrompt(player.agentConfig?.systemPrompt, {
+      allowLegalMoves: player.agentConfig?.allowLegalMoves
+    }),
     turnCount: 0,
     fallbackCount: 0,
     events: []

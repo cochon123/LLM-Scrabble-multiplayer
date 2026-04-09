@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { io, type Socket } from "socket.io-client";
-import { DEFAULT_AGENT_SYSTEM_PROMPT } from "../shared/agent-prompt";
+import { buildDefaultAgentSystemPrompt, isDefaultAgentSystemPrompt } from "../shared/agent-prompt";
 import type {
   AgentConfig,
   AgentProvider,
@@ -1501,16 +1501,17 @@ function SeatEditor({
   disabled: boolean;
   onChange: (seat: PlayerSeat, patch: Partial<PlayerSeat> & { agentConfig?: AgentConfig }) => void;
 }) {
+  const defaultPromptForSeat = buildDefaultAgentSystemPrompt(Boolean(seat.agentConfig?.allowLegalMoves));
   const [draftName, setDraftName] = useState(seat.name);
   const [draftModel, setDraftModel] = useState(seat.agentConfig?.model ?? "local-model");
   const [draftBaseUrl, setDraftBaseUrl] = useState(seat.agentConfig?.baseUrl ?? "");
   const [draftApiKey, setDraftApiKey] = useState(seat.agentConfig?.apiKey ?? "");
-  const [draftSystemPrompt, setDraftSystemPrompt] = useState(seat.agentConfig?.systemPrompt ?? DEFAULT_AGENT_SYSTEM_PROMPT);
+  const [draftSystemPrompt, setDraftSystemPrompt] = useState(seat.agentConfig?.systemPrompt ?? defaultPromptForSeat);
   const agentConfig = seat.agentConfig ?? {
     provider: "openai_compatible",
     model: "local-model",
     baseUrl: defaultBaseUrlForProvider("openai_compatible"),
-    systemPrompt: DEFAULT_AGENT_SYSTEM_PROMPT,
+    systemPrompt: defaultPromptForSeat,
     allowLegalMoves: false
   };
 
@@ -1519,8 +1520,8 @@ function SeatEditor({
     setDraftModel(seat.agentConfig?.model ?? "local-model");
     setDraftBaseUrl(seat.agentConfig?.baseUrl ?? "");
     setDraftApiKey(seat.agentConfig?.apiKey ?? "");
-    setDraftSystemPrompt(seat.agentConfig?.systemPrompt ?? DEFAULT_AGENT_SYSTEM_PROMPT);
-  }, [seat.id, seat.name, seat.agentConfig?.provider, seat.agentConfig?.model, seat.agentConfig?.baseUrl, seat.agentConfig?.apiKey, seat.agentConfig?.systemPrompt]);
+    setDraftSystemPrompt(seat.agentConfig?.systemPrompt ?? defaultPromptForSeat);
+  }, [defaultPromptForSeat, seat.id, seat.name, seat.agentConfig?.provider, seat.agentConfig?.model, seat.agentConfig?.baseUrl, seat.agentConfig?.apiKey, seat.agentConfig?.systemPrompt]);
 
   return (
     <div className={`grid gap-3 rounded-[24px] border p-4 ${seat.enabled ? "border-slate-200 bg-slate-50" : "border-slate-200 bg-slate-100/70 opacity-60"}`}>
@@ -1589,7 +1590,7 @@ function SeatEditor({
                     ...agentConfig,
                     provider: nextProvider,
                     baseUrl: nextBaseUrl,
-                    systemPrompt: agentConfig.systemPrompt ?? DEFAULT_AGENT_SYSTEM_PROMPT
+                    systemPrompt: agentConfig.systemPrompt ?? defaultPromptForSeat
                   }
                 });
               }}
@@ -1610,7 +1611,7 @@ function SeatEditor({
               onChange={(event) => setDraftModel(event.target.value)}
               onBlur={() => {
                 if (draftModel !== agentConfig.model) {
-                  onChange(seat, { agentConfig: { ...agentConfig, model: draftModel, systemPrompt: agentConfig.systemPrompt ?? DEFAULT_AGENT_SYSTEM_PROMPT } });
+                  onChange(seat, { agentConfig: { ...agentConfig, model: draftModel, systemPrompt: agentConfig.systemPrompt ?? defaultPromptForSeat } });
                 }
               }}
             />
@@ -1622,11 +1623,16 @@ function SeatEditor({
               className="h-5 w-5 rounded border-slate-300 text-indigo-600"
               checked={Boolean(agentConfig.allowLegalMoves)}
               disabled={disabled}
-              onChange={(event) =>
+              onChange={(event) => {
+                const nextAllowLegalMoves = event.target.checked;
+                const nextDefaultPrompt = buildDefaultAgentSystemPrompt(nextAllowLegalMoves);
+                const nextSystemPrompt =
+                  isDefaultAgentSystemPrompt(agentConfig.systemPrompt) ? nextDefaultPrompt : agentConfig.systemPrompt ?? nextDefaultPrompt;
+                setDraftSystemPrompt(nextSystemPrompt);
                 onChange(seat, {
-                  agentConfig: { ...agentConfig, allowLegalMoves: event.target.checked, systemPrompt: agentConfig.systemPrompt ?? DEFAULT_AGENT_SYSTEM_PROMPT }
-                })
-              }
+                  agentConfig: { ...agentConfig, allowLegalMoves: nextAllowLegalMoves, systemPrompt: nextSystemPrompt }
+                });
+              }}
             />
             Allow this agent to request legal moves
           </label>
@@ -1640,7 +1646,7 @@ function SeatEditor({
               onChange={(event) => setDraftBaseUrl(event.target.value)}
               onBlur={() => {
                 if (draftBaseUrl !== (agentConfig.baseUrl ?? "")) {
-                  onChange(seat, { agentConfig: { ...agentConfig, baseUrl: draftBaseUrl, systemPrompt: agentConfig.systemPrompt ?? DEFAULT_AGENT_SYSTEM_PROMPT } });
+                  onChange(seat, { agentConfig: { ...agentConfig, baseUrl: draftBaseUrl, systemPrompt: agentConfig.systemPrompt ?? defaultPromptForSeat } });
                 }
               }}
             />
@@ -1655,7 +1661,7 @@ function SeatEditor({
               onChange={(event) => setDraftApiKey(event.target.value)}
               onBlur={() => {
                 if (draftApiKey !== (agentConfig.apiKey ?? "")) {
-                  onChange(seat, { agentConfig: { ...agentConfig, apiKey: draftApiKey, systemPrompt: agentConfig.systemPrompt ?? DEFAULT_AGENT_SYSTEM_PROMPT } });
+                  onChange(seat, { agentConfig: { ...agentConfig, apiKey: draftApiKey, systemPrompt: agentConfig.systemPrompt ?? defaultPromptForSeat } });
                 }
               }}
             />
@@ -1669,7 +1675,7 @@ function SeatEditor({
               disabled={disabled}
               onChange={(event) => setDraftSystemPrompt(event.target.value)}
               onBlur={() => {
-                if (draftSystemPrompt !== (agentConfig.systemPrompt ?? DEFAULT_AGENT_SYSTEM_PROMPT)) {
+                if (draftSystemPrompt !== (agentConfig.systemPrompt ?? defaultPromptForSeat)) {
                   onChange(seat, { agentConfig: { ...agentConfig, systemPrompt: draftSystemPrompt } });
                 }
               }}
@@ -1790,11 +1796,29 @@ function ModelLogo({
   name?: string;
   size: "sm" | "lg";
 }) {
+  const kind = seat?.kind;
   const model = "agentConfig" in (seat ?? {}) ? seat?.agentConfig?.model : trace?.model;
   const provider = "agentConfig" in (seat ?? {}) ? seat?.agentConfig?.provider : trace?.provider;
   const resolvedName = seat?.name ?? trace?.playerName ?? name ?? "Agent";
+  const className = `${size === "lg" ? "h-12 w-12" : "h-10 w-10"} rounded-2xl border border-slate-200 bg-white p-1 object-contain`;
+  if (kind === "human") {
+    return (
+      <div className={`${className} flex items-center justify-center`}>
+        <svg viewBox="0 0 24 24" aria-hidden="true" className="h-full w-full text-slate-700">
+          <circle cx="12" cy="8" r="4" fill="currentColor" />
+          <path
+            d="M6 20c0-3.3137 2.6863-6 6-6s6 2.6863 6 6"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+          />
+        </svg>
+      </div>
+    );
+  }
   const src = getModelLogo({ model, provider, name: resolvedName });
-  return <img src={src} alt={resolvedName} className={`${size === "lg" ? "h-12 w-12" : "h-10 w-10"} rounded-2xl border border-slate-200 bg-white p-1 object-contain`} />;
+  return <img src={src} alt={resolvedName} className={className} />;
 }
 
 function LegalMoveCard({ move, onApply }: { move: LegalMove; onApply: () => void }) {
@@ -1931,6 +1955,10 @@ function labelBonus(bonus: BoardCell["bonus"]): string {
 function getModelLogo({ model, provider, name }: { model?: string; provider?: AgentProvider; name?: string }): string {
   const key = `${model ?? ""} ${provider ?? ""} ${name ?? ""}`.toLowerCase();
   if (key.includes("glm")) return "/logos/z-ai-logo.png";
+  if (key.includes("qwen")) return "/logos/qwen-logo.png";
+  if (key.includes("nemotron") || key.includes("nvidia")) return "/logos/nvidia-logo.png";
+  if (key.includes("llama") || key.includes("meta")) return "/logos/meta-logo.png";
+  if (key.includes("mimo") || key.includes("xiaomi")) return "/logos/xiaomi-mimo-logo.png";
   if (key.includes("gpt") || key.includes("openai")) return "/logos/openai-Logo.png";
   if (key.includes("claude") || key.includes("anthropic")) return "/logos/claude-logo.png";
   if (key.includes("gemini") || key.includes("google")) return "/logos/Gemini-logo.png";

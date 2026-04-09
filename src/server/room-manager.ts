@@ -1,7 +1,7 @@
 import { nanoid } from "nanoid";
 import type { Server, Socket } from "socket.io";
 import { BOARD_SIZE, getBonus } from "../shared/constants.js";
-import { DEFAULT_AGENT_SYSTEM_PROMPT } from "../shared/agent-prompt.js";
+import { buildDefaultAgentSystemPrompt } from "../shared/agent-prompt.js";
 import { Dictionary } from "../shared/dictionary.js";
 import { ScrabbleGame } from "../shared/game.js";
 import type {
@@ -1126,7 +1126,7 @@ function defaultAgentConfig() {
     provider: "openai_compatible" as const,
     model: "local-model",
     baseUrl: "http://127.0.0.1:1234/v1/chat/completions",
-    systemPrompt: DEFAULT_AGENT_SYSTEM_PROMPT,
+    systemPrompt: buildDefaultAgentSystemPrompt(false),
     temperature: 0.2,
     allowLegalMoves: false
   };
