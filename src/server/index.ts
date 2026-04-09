@@ -27,7 +27,7 @@ async function bootstrap() {
     }
   });
 
-  const dictionaryPath = resolve(process.cwd(), process.env.DICTIONARY_PATH || "public/dictionary/fr-large.txt");
+  const dictionaryPath = resolve(process.cwd(), process.env.DICTIONARY_PATH || "public/dictionary/en-large.txt");
   const dictionary = new Dictionary(await readFile(dictionaryPath, "utf8"));
   const roomManager = new RoomManager(io, dictionary);
 

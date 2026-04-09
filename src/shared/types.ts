@@ -52,6 +52,8 @@ export interface AgentTrace {
   model: string;
   updatedAt: number;
   systemPrompt: string;
+  turnCount: number;
+  fallbackCount: number;
   events: AgentTraceEvent[];
 }
 

@@ -60,6 +60,14 @@ interface ProviderCallbacks {
   onReasoningChunk: (chunk: string) => void;
 }
 
+interface OpenAICompatibleRequestVariant {
+  label: string;
+  body: Record<string, unknown>;
+  allowFallback: boolean;
+}
+
+const PROVIDER_TIMEOUT_MS = 300_000;
+
 class ProviderTransportError extends Error {
   retryable: boolean;
 
@@ -77,7 +85,7 @@ export async function runAgentTurn(
 ): Promise<ToolResult> {
   const player = context.game.getPlayer(playerId);
   if (!player) {
-    return { done: false, summary: "Agent introuvable." };
+    return { done: false, summary: "Agent not found." };
   }
   if (!agentConfig) {
     return runFallbackTurn(playerId, context, false);
@@ -92,6 +100,8 @@ export async function runAgentTurn(
     model: agentConfig.model,
     updatedAt: Date.now(),
     systemPrompt,
+    turnCount: 1,
+    fallbackCount: 0,
     events: []
   });
 
@@ -111,7 +121,7 @@ export async function runAgentTurn(
   const turnContext = state.initialized
     ? buildTurnContext(context, playerId, state)
     : buildInitialContext(context, playerId);
-  context.pushTraceEvent(playerId, createTraceEvent("context", "Contexte", turnContext));
+  context.pushTraceEvent(playerId, createTraceEvent("context", "Context", turnContext));
   conversation = [...conversation, { role: "user", content: turnContext }];
   state = {
     ...state,
@@ -124,14 +134,14 @@ export async function runAgentTurn(
 
   for (let step = 0; step < 6; step += 1) {
     if (context.isPaused()) {
-      const pausedResult = { done: false, summary: "Tour interrompu par pause.", aborted: true };
+      const pausedResult = { done: false, summary: "Turn interrupted by pause.", aborted: true };
       context.pushTraceEvent(playerId, createTraceEvent("status", "Pause", pausedResult.summary));
       context.setAgentState(playerId, state);
       return pausedResult;
     }
 
     const reasoningEvent = createTraceEvent("reasoning", `Reasoning ${step + 1}`, "");
-    const providerReplyEvent = createTraceEvent("provider_reply", `Réponse modèle ${step + 1}`, "");
+    const providerReplyEvent = createTraceEvent("provider_reply", `Model reply ${step + 1}`, "");
     let reasoningOpened = false;
     let replyOpened = false;
 
@@ -173,13 +183,13 @@ export async function runAgentTurn(
       }, (type, payload) => context.logDiagnostic(`agent_provider_${type}`, { playerId, ...payload }));
     } catch (error) {
       if (isAbortError(error)) {
-        const pausedResult = { done: false, summary: "Tour interrompu par pause.", aborted: true };
+        const pausedResult = { done: false, summary: "Turn interrupted by pause.", aborted: true };
         context.pushTraceEvent(playerId, createTraceEvent("status", "Pause", pausedResult.summary));
         context.setAgentState(playerId, state);
         return pausedResult;
       }
       context.setAgentState(playerId, state);
-      context.pushTraceEvent(playerId, createTraceEvent("status", "Fallback", "Échec fournisseur. Passage sur le moteur de secours."));
+      context.pushTraceEvent(playerId, createTraceEvent("status", "Fallback", "Provider failure. Switching to the fallback engine."));
       return runFallbackTurn(playerId, context, legalMovesAllowed);
     }
 
@@ -204,19 +214,19 @@ export async function runAgentTurn(
         done: true
       });
     } else {
-      context.pushTraceEvent(playerId, createTraceEvent("provider_reply", `Réponse modèle ${step + 1}`, providerReply.text || "(vide)"));
+      context.pushTraceEvent(playerId, createTraceEvent("provider_reply", `Model reply ${step + 1}`, providerReply.text || "(empty)"));
     }
 
-    conversation = [...conversation, { role: "assistant", content: providerReply.text || "(vide)" }];
+    conversation = [...conversation, { role: "assistant", content: providerReply.text || "(empty)" }];
 
     const command = parseToolCommand(providerReply.text);
     if (!command) {
       const reminder = [
-        "Réponse invalide. Tu dois renvoyer un unique objet JSON {tool, arguments}.",
-        "Le jeu se joue en français.",
-        "Les coordonnées row/col sont 0-indexées."
+        "Invalid response. You must return a single JSON object {tool, arguments}.",
+        "The game is played in English.",
+        "row/col coordinates are 0-indexed."
       ].join("\n");
-      context.pushTraceEvent(playerId, createTraceEvent("status", "Réponse invalide", providerReply.text || "(vide)"));
+      context.pushTraceEvent(playerId, createTraceEvent("status", "Invalid response", providerReply.text || "(empty)"));
       conversation = [...conversation, { role: "user", content: reminder }];
       state = { ...state, messages: conversation };
       context.setAgentState(playerId, state);
@@ -225,7 +235,7 @@ export async function runAgentTurn(
 
     context.pushTraceEvent(playerId, createTraceEvent("tool_call", `Tool call ${step + 1}`, JSON.stringify(command, null, 2)));
     const result = executeTool(command.tool, command.arguments, playerId, context, legalMovesAllowed);
-    context.pushTraceEvent(playerId, createTraceEvent("tool_result", `Résultat ${step + 1}`, result.summary));
+    context.pushTraceEvent(playerId, createTraceEvent("tool_result", `Result ${step + 1}`, result.summary));
 
     if (result.done || result.aborted) {
       state = {
@@ -238,10 +248,10 @@ export async function runAgentTurn(
 
     const updatedPlayer = context.game.getPlayer(playerId);
     const retryMessage = [
-      `Résultat outil: ${result.summary}`,
-      `Chevalet actuel: ${updatedPlayer ? formatRack(updatedPlayer.rack) : "(joueur introuvable)"}`,
-      "Rappel: le jeu se joue en français.",
-      "Rappel: toutes les coordonnées row/col des outils sont 0-indexées."
+      `Tool result: ${result.summary}`,
+      `Current rack: ${updatedPlayer ? formatRack(updatedPlayer.rack) : "(player not found)"}`,
+      "Reminder: the game is played in English.",
+      "Reminder: all tool row/col coordinates are 0-indexed."
     ].join("\n");
     conversation = [...conversation, { role: "user", content: retryMessage }];
     state = { ...state, messages: conversation };
@@ -249,7 +259,7 @@ export async function runAgentTurn(
   }
 
   context.setAgentState(playerId, state);
-  context.pushTraceEvent(playerId, createTraceEvent("status", "Fallback", "Aucune action finale valide. Passage sur le moteur de secours."));
+  context.pushTraceEvent(playerId, createTraceEvent("status", "Fallback", "No valid final action was produced. Switching to the fallback engine."));
   return runFallbackTurn(playerId, context, legalMovesAllowed);
 }
 
@@ -342,7 +352,7 @@ function buildInitialContext(context: AgentRoomContext, playerId: string): strin
     {
       room_id: context.roomId,
       rules: {
-        language: "fr",
+        language: "en",
         coordinates: "0-indexed",
         center: { row: 7, col: 7 }
       },
@@ -363,7 +373,7 @@ function buildInitialContext(context: AgentRoomContext, playerId: string): strin
       },
       public_timeline: timeline,
       board_state_summary: occupiedTiles,
-      instruction: "À toi de jouer. Réponds uniquement avec un outil JSON."
+      instruction: "Your turn. Reply only with a JSON tool call."
     },
     null,
     2
@@ -401,7 +411,7 @@ function buildTurnContext(context: AgentRoomContext, playerId: string, state: Ag
             summary: snapshot.lastMove.summary
           }
         : null,
-      instruction: "C'est à toi. Choisis une action finale légale via un outil JSON."
+      instruction: "Your turn. Choose a legal final action through a JSON tool call."
     },
     null,
     2
@@ -443,20 +453,42 @@ async function callOpenAICompatible(
     headers.Authorization = `Bearer ${apiKey}`;
   }
 
-  return callStreamProviderWithRetries(
-    "openai_compatible",
-    baseUrl,
-    headers,
-    {
+  const baseBody = {
+    model: config.model,
+    temperature: config.temperature ?? 0.2,
+    stream: true,
+    messages
+  };
+  const requestVariants = buildOpenAICompatibleRequestVariants(config, baseBody);
+  let lastError: unknown;
+
+  for (const variant of requestVariants) {
+    diagnostics?.("provider_reasoning_variant_selected", {
+      provider: "openai_compatible",
       model: config.model,
-      temperature: config.temperature ?? 0.2,
-      stream: true,
-      messages
-    },
-    signal,
-    callbacks,
-    diagnostics
-  );
+      label: variant.label,
+      extras: Object.keys(variant.body).filter((key) => !["model", "temperature", "stream", "messages"].includes(key))
+    });
+    try {
+      return await callStreamProviderWithRetries("openai_compatible", baseUrl, headers, variant.body, signal, callbacks, diagnostics);
+    } catch (error) {
+      if (isAbortError(error)) {
+        throw error;
+      }
+      lastError = error;
+      if (!variant.allowFallback || !isPossiblyUnsupportedRequestError(error)) {
+        throw error;
+      }
+      diagnostics?.("provider_reasoning_variant_rejected", {
+        provider: "openai_compatible",
+        model: config.model,
+        label: variant.label,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
 async function callOpenRouter(
@@ -485,7 +517,11 @@ async function callOpenRouter(
       model: config.model,
       temperature: config.temperature ?? 0.2,
       stream: true,
-      messages
+      messages,
+      reasoning: {
+        enabled: true,
+        exclude: false
+      }
     },
     signal,
     callbacks,
@@ -507,7 +543,7 @@ async function callGoogle(
 
   const model = config.model || "gemini-2.5-flash";
   const [systemMessage, ...restMessages] = messages;
-  const requestSignal = withTimeout(signal, 90_000);
+  const requestSignal = withTimeout(signal, PROVIDER_TIMEOUT_MS);
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${apiKey}`;
   diagnostics?.("provider_request_started", {
     provider: "google",
@@ -532,7 +568,8 @@ async function callGoogle(
           parts: [{ text: message.content }]
         })),
         generationConfig: {
-          temperature: config.temperature ?? 0.2
+          temperature: config.temperature ?? 0.2,
+          thinkingConfig: buildGoogleThinkingConfig(model)
         }
       })
     }
@@ -551,14 +588,32 @@ async function callGoogle(
   const data = (await response.json()) as {
     candidates?: Array<{
       content?: {
-        parts?: Array<{ text?: string }>;
+        parts?: Array<{ text?: string; thought?: boolean }>;
       };
     }>;
   };
 
-  const text = data.candidates?.[0]?.content?.parts?.map((part) => part.text ?? "").join("") ?? "";
-  await emitBufferedChunks(text, callbacks.onTextChunk, requestSignal);
-  return { text };
+  const parts = data.candidates?.[0]?.content?.parts ?? [];
+  let text = "";
+  let reasoning = "";
+  for (const part of parts) {
+    const partText = part.text ?? "";
+    if (!partText) {
+      continue;
+    }
+    if (part.thought) {
+      reasoning += partText;
+    } else {
+      text += partText;
+    }
+  }
+  if (reasoning) {
+    await emitBufferedChunks(reasoning, callbacks.onReasoningChunk, requestSignal);
+  }
+  if (text) {
+    await emitBufferedChunks(text, callbacks.onTextChunk, requestSignal);
+  }
+  return { text, reasoning: reasoning || undefined };
 }
 
 async function callOllama(
@@ -568,7 +623,7 @@ async function callOllama(
   callbacks: ProviderCallbacks,
   diagnostics?: (type: string, payload: Record<string, unknown>) => void
 ): Promise<ProviderReply> {
-  const requestSignal = withTimeout(signal, 90_000);
+  const requestSignal = withTimeout(signal, PROVIDER_TIMEOUT_MS);
   const url = config.baseUrl || "http://127.0.0.1:11434/api/chat";
   diagnostics?.("provider_request_started", {
     provider: "ollama",
@@ -586,6 +641,7 @@ async function callOllama(
     body: JSON.stringify({
       model: config.model,
       stream: true,
+      think: true,
       options: {
         temperature: config.temperature ?? 0.2
       },
@@ -668,6 +724,97 @@ async function callOllama(
   return { text, reasoning };
 }
 
+function buildOpenAICompatibleRequestVariants(
+  config: AgentConfig,
+  baseBody: Record<string, unknown>
+): OpenAICompatibleRequestVariant[] {
+  const model = (config.model || "").toLowerCase();
+  const variants: OpenAICompatibleRequestVariant[] = [];
+
+  const withDeepSeekThinking =
+    model.includes("deepseek") || model.includes("reasoner")
+      ? {
+          ...baseBody,
+          thinking: {
+            type: "enabled"
+          }
+        }
+      : null;
+
+  const withReasoningEffort =
+    supportsReasoningEffort(model)
+      ? {
+          ...baseBody,
+          reasoning_effort: "high"
+        }
+      : null;
+
+  if (withDeepSeekThinking && withReasoningEffort) {
+    variants.push({
+      label: "thinking+reasoning_effort",
+      body: {
+        ...withDeepSeekThinking,
+        reasoning_effort: "high"
+      },
+      allowFallback: true
+    });
+  }
+
+  if (withDeepSeekThinking) {
+    variants.push({
+      label: "thinking",
+      body: withDeepSeekThinking,
+      allowFallback: true
+    });
+  }
+
+  if (withReasoningEffort) {
+    variants.push({
+      label: "reasoning_effort",
+      body: withReasoningEffort,
+      allowFallback: true
+    });
+  }
+
+  variants.push({
+    label: "plain",
+    body: baseBody,
+    allowFallback: false
+  });
+
+  return dedupeOpenAICompatibleVariants(variants);
+}
+
+function dedupeOpenAICompatibleVariants(variants: OpenAICompatibleRequestVariant[]): OpenAICompatibleRequestVariant[] {
+  const seen = new Set<string>();
+  return variants.filter((variant) => {
+    const key = JSON.stringify(variant.body);
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
+
+function supportsReasoningEffort(model: string): boolean {
+  return /gpt-5|o1|o3|o4|grok/i.test(model);
+}
+
+function buildGoogleThinkingConfig(model: string): Record<string, unknown> {
+  if (/gemini-3/i.test(model)) {
+    return {
+      includeThoughts: true,
+      thinkingLevel: "high"
+    };
+  }
+
+  return {
+    includeThoughts: true,
+    thinkingBudget: 1024
+  };
+}
+
 async function readProviderResponse(
   response: Response,
   callbacks: ProviderCallbacks,
@@ -693,7 +840,7 @@ async function readProviderResponse(
       reasoningChars: reasoning?.length ?? 0
     });
     if (!text.trim() && !reasoning?.trim()) {
-      throw new ProviderTransportError("Réponse fournisseur vide ou sans contenu exploitable.", true);
+      throw new ProviderTransportError("Provider response was empty or had no usable content.", true);
     }
     return { text, reasoning };
   }
@@ -774,7 +921,7 @@ async function readProviderResponse(
   });
 
   if (!text.trim() && !reasoning.trim()) {
-    throw new ProviderTransportError("Flux fournisseur terminé sans texte ni reasoning.", true);
+    throw new ProviderTransportError("Provider stream ended without text or reasoning.", true);
   }
 
   return {
@@ -856,7 +1003,7 @@ function executeTool(
   if (context.isPaused()) {
     return {
       done: false,
-      summary: "La partie est en pause.",
+      summary: "The game is paused.",
       aborted: true
     };
   }
@@ -871,7 +1018,7 @@ function executeTool(
       if (!legalMovesAllowed) {
         return {
           done: false,
-          summary: "L'outil list_legal_moves n'est pas autorisé pour cet agent."
+          summary: "The list_legal_moves tool is not allowed for this agent."
         };
       }
       const limit = typeof args.limit === "number" ? Math.max(1, Math.min(args.limit, 16)) : 8;
@@ -912,10 +1059,10 @@ function executeTool(
     case "send_chat": {
       const message = String(args.message ?? "").trim();
       if (!message) {
-        return { done: false, summary: "Message vide." };
+        return { done: false, summary: "Empty message." };
       }
       context.pushChat(playerId, message);
-      return { done: false, summary: "Message envoyé." };
+      return { done: false, summary: "Message sent." };
     }
     case "pass_turn": {
       const result = context.game.pass(playerId);
@@ -925,7 +1072,7 @@ function executeTool(
       };
     }
     default:
-      return { done: false, summary: `Outil inconnu: ${tool}` };
+      return { done: false, summary: `Unknown tool: ${tool}` };
   }
 }
 
@@ -949,9 +1096,10 @@ function mapAgentPlacements(
 ): { ok: true; placements: PlacementInput[] } | { ok: false; error: string } {
   const player = game.getPlayer(playerId);
   if (!player) {
-    return { ok: false, error: "Joueur introuvable." };
+    return { ok: false, error: "Player not found." };
   }
 
+  const board = game.getSnapshot(playerId).board;
   const pool = player.rack.map((tile: Tile) => ({ ...tile }));
   const mapped: PlacementInput[] = [];
   for (const [index, placement] of placements.entries()) {
@@ -961,7 +1109,7 @@ function mapAgentPlacements(
       !Number.isInteger(placement.row) ||
       !Number.isInteger(placement.col)
     ) {
-      return { ok: false, error: `Placement ${index + 1}: coordonnées invalides. Format attendu {row, col, letter}.` };
+      return { ok: false, error: `Placement ${index + 1}: invalid coordinates. Expected format {row, col, letter}.` };
     }
     const normalizedLetter = String(placement.letter ?? "")
       .normalize("NFD")
@@ -971,16 +1119,30 @@ function mapAgentPlacements(
     if (!normalizedLetter) {
       return {
         ok: false,
-        error: `Placement ${index + 1} (${formatCoord(placement.row, placement.col)}): lettre manquante.`
+        error: `Placement ${index + 1} (${formatCoord(placement.row, placement.col)}): missing letter.`
       };
     }
+
+    const boardCell = board[placement.row]?.[placement.col];
+    const existingLetter =
+      boardCell?.tile ? (boardCell.tile.blank ? boardCell.tile.assignedLetter || "" : boardCell.tile.letter) : "";
+    if (existingLetter) {
+      if (existingLetter.toUpperCase() !== normalizedLetter) {
+        return {
+          ok: false,
+          error: `Placement ${index + 1} (${formatCoord(placement.row, placement.col)}): square already contains ${existingLetter}.`
+        };
+      }
+      continue;
+    }
+
     const directIndex = pool.findIndex((tile: Tile) => !tile.blank && tile.letter === normalizedLetter);
     const blankIndex = pool.findIndex((tile: Tile) => tile.blank);
     const pickedIndex = directIndex >= 0 ? directIndex : blankIndex;
     if (pickedIndex === -1) {
       return {
         ok: false,
-        error: `Placement ${index + 1} (${formatCoord(placement.row, placement.col)}): lettre ${normalizedLetter} absente du chevalet ${formatRack(player.rack)}.`
+        error: `Placement ${index + 1} (${formatCoord(placement.row, placement.col)}): letter ${normalizedLetter} is not in rack ${formatRack(player.rack)}.`
       };
     }
     const tile = pool.splice(pickedIndex, 1)[0];
@@ -990,6 +1152,10 @@ function mapAgentPlacements(
       tileId: tile.id,
       letter: tile.blank ? normalizedLetter : undefined
     });
+  }
+
+  if (mapped.length === 0) {
+    return { ok: false, error: "No new tiles were provided. Return only newly placed tiles, or include at least one new tile." };
   }
 
   return { ok: true, placements: mapped };
@@ -1002,7 +1168,7 @@ function mapLettersToTileIds(
 ): { ok: true; tileIds: string[] } | { ok: false; error: string } {
   const player = game.getPlayer(playerId);
   if (!player) {
-    return { ok: false, error: "Joueur introuvable." };
+    return { ok: false, error: "Player not found." };
   }
   const pool = player.rack.map((tile: Tile) => ({ ...tile }));
   const tileIds: string[] = [];
@@ -1010,7 +1176,7 @@ function mapLettersToTileIds(
     const letter = rawLetter.normalize("NFD").replace(/\p{Diacritic}/gu, "").toUpperCase().slice(0, 1);
     const index = pool.findIndex((tile: Tile) => (letter === "?" ? tile.blank : tile.letter === letter && !tile.blank));
     if (index === -1) {
-      return { ok: false, error: `Lettre introuvable dans le chevalet: ${letter}` };
+      return { ok: false, error: `Letter not found in rack: ${letter}` };
     }
     tileIds.push(pool.splice(index, 1)[0].id);
   }
@@ -1019,12 +1185,12 @@ function mapLettersToTileIds(
 
 function runFallbackTurn(playerId: string, context: AgentRoomContext, legalMovesAllowed: boolean): ToolResult {
   if (context.isPaused()) {
-    return { done: false, summary: "Tour interrompu par pause.", aborted: true };
+    return { done: false, summary: "Turn interrupted by pause.", aborted: true };
   }
 
   const player = context.game.getPlayer(playerId);
   if (!player) {
-    return { done: false, summary: "Agent introuvable." };
+    return { done: false, summary: "Agent not found." };
   }
 
   context.beginTrace({
@@ -1034,17 +1200,19 @@ function runFallbackTurn(playerId: string, context: AgentRoomContext, legalMoves
     model: player.agentConfig?.model ?? "fallback",
     updatedAt: Date.now(),
     systemPrompt: resolveAgentSystemPrompt(player.agentConfig?.systemPrompt),
+    turnCount: 0,
+    fallbackCount: 0,
     events: []
   });
 
   const moves = context.game.listLegalMoves(playerId, 8);
   if (moves.length > 0) {
     const fallbackReason = legalMovesAllowed
-      ? `Le moteur de secours choisit un bon coup disponible: ${moves[0].summary}.`
-      : "Le moteur de secours choisit un coup jouable en interne sans exposer la liste des coups possibles.";
-    context.pushTraceEvent(playerId, createTraceEvent("reasoning", "Moteur de secours", fallbackReason));
+      ? `The fallback engine chooses a strong available move: ${moves[0].summary}.`
+      : "The fallback engine chooses a playable internal move without exposing the legal move list.";
+    context.pushTraceEvent(playerId, createTraceEvent("reasoning", "Fallback engine", fallbackReason));
     if (Math.random() < 0.35) {
-      context.pushChat(playerId, `Je tente ${moves[0].formedWords[0]} pour ${moves[0].score} points.`);
+      context.pushChat(playerId, `Trying ${moves[0].formedWords[0]} for ${moves[0].score} points.`);
     }
     context.pushTraceEvent(
       playerId,
@@ -1068,7 +1236,7 @@ function runFallbackTurn(playerId: string, context: AgentRoomContext, legalMoves
       )
     );
     const result = context.game.submitMove(playerId, moves[0].placements);
-    context.pushTraceEvent(playerId, createTraceEvent("tool_result", "Résultat", result.ok ? result.move.summary : result.error));
+    context.pushTraceEvent(playerId, createTraceEvent("tool_result", "Result", result.ok ? result.move.summary : result.error));
     return {
       done: result.ok,
       summary: result.ok ? result.move.summary : result.error
@@ -1081,21 +1249,21 @@ function runFallbackTurn(playerId: string, context: AgentRoomContext, legalMoves
       playerId,
       createTraceEvent(
         "reasoning",
-        "Moteur de secours",
+        "Fallback engine",
         legalMovesAllowed
-          ? "Aucun coup satisfaisant trouvé. L'agent tente un échange."
-          : "Aucun coup retenu. Le moteur de secours tente un échange."
+          ? "No satisfying move found. The agent attempts an exchange."
+          : "No move selected. The fallback engine attempts an exchange."
       )
     );
     const result = context.game.exchangeTiles(playerId, exchangeCandidates);
-    context.pushTraceEvent(playerId, createTraceEvent("tool_result", "Résultat", result.ok ? result.move.summary : result.error));
+    context.pushTraceEvent(playerId, createTraceEvent("tool_result", "Result", result.ok ? result.move.summary : result.error));
     if (result.ok) {
       return { done: true, summary: result.move.summary };
     }
   }
 
   const result = context.game.pass(playerId);
-  context.pushTraceEvent(playerId, createTraceEvent("tool_result", "Résultat", result.ok ? result.move.summary : result.error));
+  context.pushTraceEvent(playerId, createTraceEvent("tool_result", "Result", result.ok ? result.move.summary : result.error));
   return {
     done: result.ok,
     summary: result.ok ? result.move.summary : result.error
@@ -1110,32 +1278,32 @@ function describePlayMoveFailure(
 ): string {
   const player = game.getPlayer(playerId);
   const extraHints: string[] = [];
-  if (reason.includes("Case deja occupee")) {
-    extraHints.push("Indice: tu as probablement renvoyé une lettre de croisement déjà présente sur le plateau. Avec play_move, ne renvoie que les nouvelles tuiles.");
+  if (reason.includes("already contains")) {
+    extraHints.push("Hint: you probably returned a crossing letter that is already on the board. With play_move, return only newly placed tiles.");
   }
   const details = [
-    `Raison: ${reason}`,
-    `Placements tentés: ${formatAttemptedPlacements(attemptedPlacements)}`,
-    `Chevalet actuel: ${player ? formatRack(player.rack) : "(joueur introuvable)"}`,
-    "Rappel: le jeu se joue en français.",
-    "Rappel: les coordonnées des outils sont 0-indexées.",
+    `Reason: ${reason}`,
+    `Attempted placements: ${formatAttemptedPlacements(attemptedPlacements)}`,
+    `Current rack: ${player ? formatRack(player.rack) : "(player not found)"}`,
+    "Reminder: the game is played in English.",
+    "Reminder: tool coordinates are 0-indexed.",
     ...extraHints
   ];
-  return `Coup refusé.\n${details.join("\n")}`;
+  return `Move rejected.\n${details.join("\n")}`;
 }
 
 function formatAttemptedPlacements(placements: AgentPlacement[]): string {
   if (placements.length === 0) {
-    return "(aucun)";
+    return "(none)";
   }
 
   return placements
     .map((placement, index) => {
       const letter = String(placement.letter ?? "?").slice(0, 1) || "?";
       if (!Number.isInteger(placement.row) || !Number.isInteger(placement.col)) {
-        return `#${index + 1} ${letter} coordonnées invalides`;
+        return `#${index + 1} ${letter} invalid coordinates`;
       }
-      return `#${index + 1} ${letter} en ${formatCoord(placement.row, placement.col)}`;
+      return `#${index + 1} ${letter} at ${formatCoord(placement.row, placement.col)}`;
     })
     .join(", ");
 }
@@ -1148,7 +1316,7 @@ function formatRack(rack: Tile[]): string {
 }
 
 function formatCoord(row: number, col: number): string {
-  return `row ${row}, col ${col} (affichage humain ${row + 1},${col + 1})`;
+  return `row ${row}, col ${col} (human display ${row + 1},${col + 1})`;
 }
 
 function createTraceEvent(kind: AgentTraceEvent["kind"], title: string, content: string): AgentTraceEvent {
@@ -1258,7 +1426,7 @@ async function callStreamProviderWithRetries(
 ): Promise<ProviderReply> {
   let lastError: unknown;
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    const requestSignal = withTimeout(signal, 90_000);
+    const requestSignal = withTimeout(signal, PROVIDER_TIMEOUT_MS);
     diagnostics?.("provider_request_started", {
       provider,
       url,
@@ -1320,6 +1488,11 @@ function isRetryableProviderError(error: unknown): boolean {
   }
   const message = error instanceof Error ? error.message : String(error);
   return /ECONNRESET|socket hang up|network|fetch failed/i.test(message);
+}
+
+function isPossiblyUnsupportedRequestError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /(error 400|error 422|unsupported|unknown|invalid|extra inputs|unrecognized|unexpected)/i.test(message);
 }
 
 async function delay(ms: number, signal: AbortSignal): Promise<void> {

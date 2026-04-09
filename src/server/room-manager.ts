@@ -88,7 +88,7 @@ export class RoomManager {
 
   attach(socket: ClientSocket): void {
     const clientId = String(socket.handshake.auth.clientId || nanoid());
-    const displayName = String(socket.handshake.auth.displayName || "Joueur");
+    const displayName = String(socket.handshake.auth.displayName || "Player");
     const existingClient = this.clients.get(clientId);
     const client: ClientRecord = {
       clientId,
@@ -189,7 +189,7 @@ export class RoomManager {
       return;
     }
 
-    client.displayName = payload.displayName.trim() || "Joueur";
+    client.displayName = payload.displayName.trim() || "Player";
     client.socketId = socket.id;
 
     const roomId = nanoid(8);
@@ -214,10 +214,10 @@ export class RoomManager {
           connected: true,
           agentConfig: defaultAgentConfig()
         }),
-        createSeat(2, { enabled: false, kind: "human", name: "Joueur 3" }),
-        createSeat(3, { enabled: false, kind: "human", name: "Joueur 4" })
+        createSeat(2, { enabled: false, kind: "human", name: "Player 3" }),
+        createSeat(3, { enabled: false, kind: "human", name: "Player 4" })
       ],
-      chat: [systemChat("Salon créé. Configure les sièges puis lance la partie.")],
+      chat: [systemChat("Room created. Configure the seats, then start the game.")],
       logs: [],
       agentTraces: {},
       agentStates: {},
@@ -233,7 +233,7 @@ export class RoomManager {
 
     this.rooms.set(roomId, room);
     this.moveClientToRoom(socket, client, roomId);
-    this.pushPublicTimeline(room, "status", "Salon créé.");
+    this.pushPublicTimeline(room, "status", "Room created.");
     this.logRoomEvent(room, "room_created", {
       hostClientId: clientId,
       hostName: client.displayName,
@@ -248,7 +248,7 @@ export class RoomManager {
     const room = this.rooms.get(payload.roomId);
     const client = this.clients.get(clientId);
     if (!room || !client) {
-      socket.emit("error_message", "Salon introuvable.");
+      socket.emit("error_message", "Room not found.");
       return;
     }
 
@@ -271,7 +271,7 @@ export class RoomManager {
     const room = this.rooms.get(payload.roomId);
     const client = this.clients.get(clientId);
     if (!room || !client) {
-      socket.emit("error_message", "Salon introuvable.");
+      socket.emit("error_message", "Room not found.");
       return;
     }
 
@@ -286,7 +286,7 @@ export class RoomManager {
     } else {
       const seat = room.seats.find((entry) => entry.enabled && entry.kind === "human" && !entry.ownerClientId);
       if (!seat) {
-        socket.emit("error_message", "Aucun siège joueur humain n'est disponible dans ce salon.");
+        socket.emit("error_message", "No human player seat is available in this room.");
         room.spectatorClientIds.add(clientId);
         this.syncRoom(room.id);
         return;
@@ -318,7 +318,7 @@ export class RoomManager {
       return;
     }
     if (room.game) {
-      this.emitToClient(clientId, "error_message", "Impossible de modifier les options pendant la partie.");
+      this.emitToClient(clientId, "error_message", "Cannot change options during a live game.");
       return;
     }
 
@@ -337,11 +337,11 @@ export class RoomManager {
       return;
     }
     if (room.hostClientId !== clientId) {
-      this.emitToClient(clientId, "error_message", "Seul l'hôte peut configurer les sièges.");
+      this.emitToClient(clientId, "error_message", "Only the host can configure seats.");
       return;
     }
     if (room.game) {
-      this.emitToClient(clientId, "error_message", "Impossible de modifier les sièges pendant la partie.");
+      this.emitToClient(clientId, "error_message", "Cannot change seats during a live game.");
       return;
     }
 
@@ -413,7 +413,7 @@ export class RoomManager {
       return;
     }
     if (room.hostClientId !== clientId) {
-      this.emitToClient(clientId, "error_message", "Seul l'hôte peut lancer la partie.");
+      this.emitToClient(clientId, "error_message", "Only the host can start the game.");
       return;
     }
 
@@ -425,19 +425,19 @@ export class RoomManager {
 
     const invalidHumanSeat = activeSeats.find((seat) => seat.kind === "human" && !seat.ownerClientId);
     if (invalidHumanSeat) {
-      this.emitToClient(clientId, "error_message", "Tous les sièges humains actifs doivent être occupés.");
+      this.emitToClient(clientId, "error_message", "All active human seats must be occupied.");
       return;
     }
 
     room.game = new ScrabbleGame(room.id, this.dictionary, activeSeats);
     room.game.start();
-    room.chat.push(systemChat("La partie commence."));
+    room.chat.push(systemChat("The game is starting."));
     room.finishedLogged = false;
     room.paused = false;
     room.agentAbortController = null;
     room.agentStates = {};
     room.publicTimeline = [];
-    this.pushPublicTimeline(room, "status", "La partie commence.");
+    this.pushPublicTimeline(room, "status", "The game is starting.");
     this.logRoomEvent(room, "game_started", {
       seats: summarizeSeats(activeSeats),
       firstPlayerId: room.game.getCurrentPlayer()?.id ?? null,
@@ -592,7 +592,7 @@ export class RoomManager {
       return;
     }
     if (room.paused) {
-      this.emitToClient(clientId, "error_message", "La partie est en pause.");
+      this.emitToClient(clientId, "error_message", "The game is paused.");
       return;
     }
     if (!room.options.showLegalMoves) {
@@ -600,7 +600,7 @@ export class RoomManager {
         playerId,
         reason: "feature_disabled"
       });
-      this.emitToClient(clientId, "error_message", "Les coups légaux sont désactivés pour cette partie.");
+      this.emitToClient(clientId, "error_message", "Legal move suggestions are disabled for this game.");
       return;
     }
     const moves = room.game.listLegalMoves(playerId, 12);
@@ -615,7 +615,7 @@ export class RoomManager {
     const room = this.rooms.get(payload.roomId);
     if (!room?.game || room.hostClientId !== clientId) {
       if (room) {
-        this.emitToClient(clientId, "error_message", "Seul l'hôte peut mettre la partie en pause.");
+        this.emitToClient(clientId, "error_message", "Only the host can pause the game.");
       }
       return;
     }
@@ -625,7 +625,7 @@ export class RoomManager {
 
     room.paused = !room.paused;
     room.pauseRequestedByClientId = clientId;
-    this.pushPublicTimeline(room, "status", room.paused ? "Partie mise en pause." : "Partie reprise.");
+    this.pushPublicTimeline(room, "status", room.paused ? "Game paused." : "Game resumed.");
     this.touchRoom(room);
     this.logRoomEvent(room, room.paused ? "game_paused" : "game_resumed", {
       requestedBy: clientId
@@ -736,10 +736,14 @@ export class RoomManager {
           model: trace.model,
           systemPrompt: trace.systemPrompt,
           updatedAt: trace.updatedAt,
+          turnCount: (existing.turnCount ?? 0) + (trace.turnCount ?? 0),
+          fallbackCount: (existing.fallbackCount ?? 0) + (trace.fallbackCount ?? 0),
           events: trace.events.length > 0 ? [...existing.events, ...trace.events].slice(-320) : existing.events
         }
       : {
           ...trace,
+          turnCount: trace.turnCount ?? 0,
+          fallbackCount: trace.fallbackCount ?? 0,
           events: trace.events.slice(-320)
         };
 
@@ -774,6 +778,9 @@ export class RoomManager {
     }
     trace.events = [...trace.events, event].slice(-320);
     trace.updatedAt = event.createdAt;
+    if (event.kind === "status" && event.title === "Fallback") {
+      trace.fallbackCount = (trace.fallbackCount ?? 0) + 1;
+    }
     this.logRoomEvent(room, "agent_trace_event", {
       playerId,
       playerName: trace.playerName,
@@ -794,6 +801,9 @@ export class RoomManager {
     }
     trace.events = [...trace.events, event].slice(-320);
     trace.updatedAt = event.createdAt;
+    if (event.kind === "status" && event.title === "Fallback") {
+      trace.fallbackCount = (trace.fallbackCount ?? 0) + 1;
+    }
     this.logRoomEvent(room, "agent_trace_event", {
       playerId,
       playerName: trace.playerName,
@@ -856,7 +866,7 @@ export class RoomManager {
     if (!room.paused) {
       return false;
     }
-    this.emitToClient(clientId, "error_message", "La partie est en pause.");
+    this.emitToClient(clientId, "error_message", "The game is paused.");
     return true;
   }
 

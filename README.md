@@ -66,7 +66,7 @@ npm start
 ### Serveur
 
 - `PORT`: port HTTP du serveur, par défaut `3001`
-- `DICTIONARY_PATH`: chemin du dictionnaire à charger, par défaut `public/dictionary/fr-large.txt`
+- `DICTIONARY_PATH`: path to the dictionary to load, default `public/dictionary/en-large.txt`
 
 ### Fournisseurs IA
 
@@ -93,7 +93,7 @@ Quand on change de fournisseur dans le lobby, l’UI préremplit maintenant l’
 
 ## Dictionnaire
 
-Le serveur charge par défaut `public/dictionary/fr-large.txt`, un dictionnaire français beaucoup plus large que la version minimale d’origine. Le chargement normalise les mots en:
+The server now loads `public/dictionary/en-large.txt` by default. Word loading normalizes entries as:
 
 - suppression des diacritiques
 - suppression des caractères non alphabétiques

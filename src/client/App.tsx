@@ -49,7 +49,7 @@ type ConversationItem =
 export function App() {
   const [route, setRoute] = useState<Route>(() => parseRoute(window.location.pathname));
   const [clientId] = useState(() => getOrCreateClientId());
-  const [displayName, setDisplayName] = useState(() => localStorage.getItem(DISPLAY_NAME_KEY) || "Joueur");
+  const [displayName, setDisplayName] = useState(() => localStorage.getItem(DISPLAY_NAME_KEY) || "Player");
   const [conversationMode, setConversationMode] = useState<ConversationMode>(
     () => (localStorage.getItem(CONVERSATION_MODE_KEY) as ConversationMode) || "user"
   );
@@ -340,7 +340,7 @@ export function App() {
   function joinRoom(targetRoomId?: string) {
     const nextRoomId = (targetRoomId ?? roomCode).trim();
     if (!nextRoomId) {
-      setError("Entre un code salon.");
+      setError("Enter a room code.");
       return;
     }
     setPendingAction("join");
@@ -570,8 +570,8 @@ export function App() {
   }
 
   const boardTitle = view?.game.currentPlayerId
-    ? `À ${view.game.players.find((player) => player.id === view.game.currentPlayerId)?.name ?? "?"}`
-    : "En attente";
+    ? `To ${view.game.players.find((player) => player.id === view.game.currentPlayerId)?.name ?? "?"}`
+    : "Waiting";
 
   return (
     <div className="h-screen overflow-hidden bg-slate-50 text-slate-900">
@@ -671,13 +671,13 @@ function HomePage({
               <p className="text-sm font-semibold uppercase tracking-[0.3em] text-indigo-500">Scrabble Webapp</p>
               <h1 className="mt-2 text-5xl font-black tracking-[0.08em] text-slate-900 md:text-7xl">SCRABBLE CODEX</h1>
               <p className="mt-4 max-w-3xl text-lg leading-8 text-slate-600">
-                Parties multijoueur partageables, spectateurs en lecture, agents IA, chat temps réel et orchestration
-                serveur autoritaire.
+                Shareable multiplayer rooms, spectator mode, AI agents, real-time chat, and authoritative server-side
+                orchestration.
               </p>
             </div>
             <div className="grid gap-4 rounded-[28px] bg-slate-50 p-5">
               <label className="grid gap-2 text-sm font-semibold text-slate-700">
-                Nom
+                Name
                 <input
                   className="rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-indigo-500"
                   value={displayName}
@@ -685,7 +685,7 @@ function HomePage({
                 />
               </label>
               <label className="grid gap-2 text-sm font-semibold text-slate-700">
-                Code salon
+                Room code
                 <input
                   className="rounded-2xl border border-slate-200 bg-white px-4 py-3 uppercase outline-none transition focus:border-indigo-500"
                   value={roomCode}
@@ -694,10 +694,10 @@ function HomePage({
               </label>
               <div className="flex flex-wrap gap-3">
                 <button className="rounded-2xl bg-indigo-600 px-5 py-3 font-semibold text-white" onClick={onCreate}>
-                  Créer une partie
+                  Create room
                 </button>
                 <button className="rounded-2xl bg-slate-200 px-5 py-3 font-semibold text-slate-800" onClick={onJoin}>
-                  Rejoindre comme joueur
+                  Join as player
                 </button>
               </div>
               {error ? <InlineError message={error} /> : null}
@@ -709,9 +709,9 @@ function HomePage({
           <div className="mb-5 flex items-center justify-between gap-3">
             <div>
               <p className="text-sm font-semibold uppercase tracking-[0.28em] text-slate-400">Directory</p>
-              <h2 className="text-3xl font-bold text-slate-900">Parties en cours</h2>
+              <h2 className="text-3xl font-bold text-slate-900">Active rooms</h2>
             </div>
-            <span className="rounded-full bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-600">{rooms.length} salon(s)</span>
+            <span className="rounded-full bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-600">{rooms.length} room(s)</span>
           </div>
 
           <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">
@@ -725,7 +725,7 @@ function HomePage({
             ))}
             {rooms.length === 0 ? (
               <div className="rounded-[24px] border border-dashed border-slate-300 bg-slate-50 p-6 text-slate-500">
-                Aucun salon actif pour le moment.
+                No active rooms right now.
               </div>
             ) : null}
           </div>
@@ -840,7 +840,7 @@ function RoomPage(props: {
   if (loadingRoom && !view) {
     return (
       <div className="flex h-full items-center justify-center bg-slate-50">
-        <div className="rounded-[24px] bg-white px-6 py-5 shadow-xl shadow-slate-200/80">Chargement de la partie…</div>
+        <div className="rounded-[24px] bg-white px-6 py-5 shadow-xl shadow-slate-200/80">Loading room…</div>
       </div>
     );
   }
@@ -849,10 +849,10 @@ function RoomPage(props: {
     return (
       <div className="flex h-full items-center justify-center bg-slate-50 px-4">
         <div className="grid max-w-xl gap-4 rounded-[28px] bg-white p-8 text-center shadow-xl shadow-slate-200/80">
-          <h1 className="text-3xl font-bold">Partie introuvable</h1>
-          <p className="text-slate-600">Le salon `{routeRoomId}` n’existe pas ou n’est plus disponible en mémoire.</p>
+          <h1 className="text-3xl font-bold">Room not found</h1>
+          <p className="text-slate-600">The room `{routeRoomId}` does not exist or is no longer available in memory.</p>
           <button className="rounded-2xl bg-indigo-600 px-5 py-3 font-semibold text-white" onClick={() => window.location.assign("/")}>
-            Retour à l’accueil
+            Back to home
           </button>
         </div>
       </div>
@@ -864,16 +864,16 @@ function RoomPage(props: {
       <header className="mb-3 rounded-[28px] bg-white px-5 py-4 shadow-xl shadow-slate-200/80">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <p className="text-sm font-semibold uppercase tracking-[0.3em] text-indigo-500">Salle {view.roomId}</p>
+            <p className="text-sm font-semibold uppercase tracking-[0.3em] text-indigo-500">Room {view.roomId}</p>
             <h1 className="mt-1 text-4xl font-black tracking-[0.08em] text-slate-900 md:text-5xl">SCRABBLE CODEX</h1>
             <p className="mt-2 text-sm text-slate-500">
-              {view.status === "lobby" ? "Lobby public" : boardTitle}
-              {view.paused ? " · En pause" : ""}
+              {view.status === "lobby" ? "Public lobby" : boardTitle}
+              {view.paused ? " · Paused" : ""}
             </p>
           </div>
           <div className="grid gap-3 md:min-w-[280px]">
             <label className="grid gap-2 text-sm font-semibold text-slate-700">
-              Nom
+              Name
               <input
                 className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none transition focus:border-indigo-500"
                 value={displayName}
@@ -882,11 +882,11 @@ function RoomPage(props: {
             </label>
             <div className="flex flex-wrap items-center justify-end gap-2">
               <span className="rounded-full bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-600">
-                {view.viewerRole === "player" ? "Joueur" : "Spectateur"}
+                {view.viewerRole === "player" ? "Player" : "Spectator"}
               </span>
               {view.status === "lobby" && view.viewerRole === "spectator" && activeHumanSeatAvailable ? (
                 <button className="rounded-2xl bg-indigo-600 px-4 py-3 font-semibold text-white" onClick={onJoinAsPlayer}>
-                  Rejoindre comme joueur
+                  Join as player
                 </button>
               ) : null}
             </div>
@@ -906,8 +906,8 @@ function RoomPage(props: {
             ))}
           </div>
           <div className="mt-4 rounded-[24px] bg-slate-50 p-4 text-sm text-slate-600">
-            <p>Spectateurs: {view.spectatorCount}</p>
-            <p className="mt-1">Statut: {roomStatusLabel(view.status)}</p>
+            <p>Spectators: {view.spectatorCount}</p>
+            <p className="mt-1">Status: {roomStatusLabel(view.status)}</p>
           </div>
         </aside>
 
@@ -987,13 +987,13 @@ function LobbyView({
     <div className="grid gap-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="text-sm font-semibold uppercase tracking-[0.28em] text-indigo-500">Lobby public</p>
-          <h2 className="text-3xl font-bold text-slate-900">Configure la partie</h2>
-          <p className="mt-2 text-slate-600">Les spectateurs voient ce salon en direct et peuvent écrire dans le chat.</p>
+          <p className="text-sm font-semibold uppercase tracking-[0.28em] text-indigo-500">Public lobby</p>
+          <h2 className="text-3xl font-bold text-slate-900">Configure room</h2>
+          <p className="mt-2 text-slate-600">Spectators can watch this room live and send chat messages.</p>
         </div>
         {isHost ? (
           <button className="rounded-2xl bg-indigo-600 px-5 py-3 font-semibold text-white" onClick={startGame}>
-            Lancer la partie
+            Start game
           </button>
         ) : null}
       </div>
@@ -1009,7 +1009,7 @@ function LobbyView({
             disabled={!isHost}
             onChange={(event) => updateRoomOption(event.target.checked)}
           />
-          Autoriser l’affichage des coups légaux pour les humains
+          Allow legal move suggestions for human players
         </label>
       </div>
 
@@ -1075,11 +1075,11 @@ function GameView({
     <div className="grid gap-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="text-sm font-semibold uppercase tracking-[0.28em] text-indigo-500">Partie</p>
-          <h2 className="text-3xl font-bold text-slate-900">Tour {view.game.turn}</h2>
+          <p className="text-sm font-semibold uppercase tracking-[0.28em] text-indigo-500">Game</p>
+          <h2 className="text-3xl font-bold text-slate-900">Turn {view.game.turn}</h2>
           <p className="mt-2 text-slate-600">
-            {view.game.players.find((player) => player.id === view.game.currentPlayerId)?.name ?? "En attente"}
-            {view.paused ? " · Pause" : ""}
+            {view.game.players.find((player) => player.id === view.game.currentPlayerId)?.name ?? "Waiting"}
+            {view.paused ? " · Paused" : ""}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -1088,21 +1088,21 @@ function GameView({
             onClick={submitMove}
             disabled={!myTurn || tentativePlacements.length === 0}
           >
-            Jouer
+            Play
           </button>
           <button
             className="rounded-2xl bg-slate-200 px-4 py-3 font-semibold text-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
             onClick={clearDraftMove}
             disabled={tentativePlacements.length === 0}
           >
-            Effacer
+            Clear
           </button>
           <button
             className="rounded-2xl bg-slate-200 px-4 py-3 font-semibold text-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
             onClick={passTurn}
             disabled={!myTurn}
           >
-            Passer
+            Pass
           </button>
         </div>
       </div>
@@ -1125,8 +1125,8 @@ function GameView({
       <div className="rounded-[28px] bg-slate-50 p-4">
         <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h3 className="text-xl font-bold text-slate-900">Chevalet</h3>
-            <p className="text-sm text-slate-500">Glisse-dépose pour réfléchir plus facilement. Clic droit pour préparer un échange.</p>
+            <h3 className="text-xl font-bold text-slate-900">Rack</h3>
+            <p className="text-sm text-slate-500">Drag and drop tiles to think visually. Right-click to prepare an exchange.</p>
           </div>
           <div className="flex flex-wrap gap-2">
             {showLegalMovesFeature ? (
@@ -1135,7 +1135,7 @@ function GameView({
                 onClick={toggleLegalMovesPanel}
                 disabled={!myTurn}
               >
-                {showLegalMovesPanel ? "Masquer les coups légaux" : "Afficher les coups légaux"}
+                {showLegalMovesPanel ? "Hide legal moves" : "Show legal moves"}
               </button>
             ) : null}
             <button
@@ -1143,7 +1143,7 @@ function GameView({
               onClick={exchangeTiles}
               disabled={!myTurn || exchangeSelection.length === 0}
             >
-              Échanger {exchangeSelection.length > 0 ? `(${exchangeSelection.length})` : ""}
+              Exchange {exchangeSelection.length > 0 ? `(${exchangeSelection.length})` : ""}
             </button>
           </div>
         </div>
@@ -1190,11 +1190,11 @@ function GameView({
         <section className="rounded-[28px] bg-slate-50 p-4">
           <div className="mb-3 flex items-center justify-between gap-3">
             <div>
-              <h3 className="text-xl font-bold text-slate-900">Coups légaux</h3>
-              <p className="text-sm text-slate-500">Grille compacte. Clique une carte pour préparer le coup.</p>
+              <h3 className="text-xl font-bold text-slate-900">Legal moves</h3>
+              <p className="text-sm text-slate-500">Compact grid. Click a card to prepare the move.</p>
             </div>
             <button className="rounded-2xl bg-white px-4 py-3 font-semibold text-slate-800" onClick={requestLegalMoves} disabled={!myTurn}>
-              Rafraîchir
+              Refresh
             </button>
           </div>
           <div className="grid gap-3 lg:grid-cols-2">
@@ -1248,7 +1248,7 @@ function ConversationPanel({
       <div className="mb-4 flex items-center justify-between gap-3">
         <div>
           <p className="text-sm font-semibold uppercase tracking-[0.28em] text-slate-400">Conversation</p>
-          <h2 className="text-2xl font-bold text-slate-900">Conversation des agents</h2>
+          <h2 className="text-2xl font-bold text-slate-900">Agent conversation</h2>
         </div>
         <div className="flex flex-wrap gap-2">
           <button className="rounded-2xl bg-slate-100 px-4 py-3 text-sm font-semibold text-slate-700" onClick={onCycleMode}>
@@ -1259,7 +1259,7 @@ function ConversationPanel({
             onClick={onPause}
             disabled={!isHost || view.status === "lobby" || view.game.finished}
           >
-            {view.paused ? "Reprendre" : "Pause"}
+            {view.paused ? "Resume" : "Pause"}
           </button>
         </div>
       </div>
@@ -1274,13 +1274,14 @@ function ConversationPanel({
                 key={item.id}
                 trace={item.trace}
                 event={item.event}
+                mode={mode}
                 expanded={expandedConversationId === item.id}
                 rack={view.game.players.find((player) => player.id === item.trace.playerId)?.rack}
                 onToggle={() => onToggleConversationItem(item.id)}
               />
             )
           )}
-          {items.length === 0 ? <div className="rounded-[20px] bg-white px-4 py-3 text-sm text-slate-500">Aucun message pour l’instant.</div> : null}
+          {items.length === 0 ? <div className="rounded-[20px] bg-white px-4 py-3 text-sm text-slate-500">No messages yet.</div> : null}
         </div>
       </div>
 
@@ -1294,10 +1295,10 @@ function ConversationPanel({
               onSendChat();
             }
           }}
-          placeholder="Écrire un message"
+          placeholder="Write a message"
         />
         <button className="rounded-2xl bg-indigo-600 px-4 py-3 font-semibold text-white" onClick={onSendChat}>
-          Envoyer
+          Send
         </button>
       </div>
     </aside>
@@ -1316,7 +1317,7 @@ function LeaderboardCard({ player }: { player: PlayerSeat }) {
           <ModelLogo seat={player} size="lg" />
           <div>
             <p className="font-bold text-slate-900">{player.name}</p>
-            <p className="text-sm text-slate-500">{player.kind === "agent" ? "Agent" : "Humain"}</p>
+            <p className="text-sm text-slate-500">{player.kind === "agent" ? "Agent" : "Human"}</p>
           </div>
         </div>
         <p className="text-3xl font-black text-slate-900">{player.score}</p>
@@ -1330,7 +1331,7 @@ function RoomCard({ room, onWatch, onJoin }: { room: RoomSummary; onWatch: () =>
     <div className="grid gap-4 rounded-[24px] bg-slate-50 p-5">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <p className="text-sm font-semibold uppercase tracking-[0.28em] text-slate-400">Salle</p>
+          <p className="text-sm font-semibold uppercase tracking-[0.28em] text-slate-400">Room</p>
           <h3 className="text-2xl font-bold text-slate-900">{room.roomId}</h3>
         </div>
         <span className={`rounded-full px-3 py-1 text-sm font-semibold ${roomStatusBadge(room.status)}`}>{roomStatusLabel(room.status)}</span>
@@ -1342,7 +1343,7 @@ function RoomCard({ room, onWatch, onJoin }: { room: RoomSummary; onWatch: () =>
               <ModelLogo seat={seat} size="sm" />
               <div>
                 <p className="font-semibold text-slate-900">{seat.name}</p>
-                <p className="text-sm text-slate-500">{seat.kind === "agent" ? "Agent" : "Humain"}</p>
+                <p className="text-sm text-slate-500">{seat.kind === "agent" ? "Agent" : "Human"}</p>
               </div>
             </div>
             <span className="text-sm font-semibold text-slate-500">{seat.score}</span>
@@ -1350,16 +1351,16 @@ function RoomCard({ room, onWatch, onJoin }: { room: RoomSummary; onWatch: () =>
         ))}
       </div>
       <div className="flex items-center justify-between gap-3 text-sm text-slate-500">
-        <span>{room.spectatorCount} spectateur(s)</span>
-        <span>{room.currentTurnPlayerName ? `À ${room.currentTurnPlayerName}` : "En attente"}</span>
+        <span>{room.spectatorCount} spectator(s)</span>
+        <span>{room.currentTurnPlayerName ? `To ${room.currentTurnPlayerName}` : "Waiting"}</span>
       </div>
       <div className="flex flex-wrap gap-2">
         <button className="rounded-2xl bg-indigo-600 px-4 py-3 font-semibold text-white" onClick={onWatch}>
-          Regarder
+          Watch
         </button>
         {onJoin ? (
           <button className="rounded-2xl bg-slate-200 px-4 py-3 font-semibold text-slate-800" onClick={onJoin}>
-            Rejoindre
+            Join
           </button>
         ) : null}
       </div>
@@ -1527,12 +1528,12 @@ function SeatEditor({
         <div className="flex items-center gap-3">
           <ModelLogo seat={seat} size="lg" />
           <div>
-            <strong className="block text-lg text-slate-900">Siège {seat.seatIndex + 1}</strong>
-            <p className="text-sm text-slate-500">{seat.kind === "agent" ? "Agent IA" : "Joueur humain"}</p>
+            <strong className="block text-lg text-slate-900">Seat {seat.seatIndex + 1}</strong>
+            <p className="text-sm text-slate-500">{seat.kind === "agent" ? "AI agent" : "Human player"}</p>
           </div>
         </div>
         <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
-          Actif
+          Active
           <input
             type="checkbox"
             className="h-5 w-5 rounded border-slate-300 text-indigo-600"
@@ -1551,13 +1552,13 @@ function SeatEditor({
           disabled={disabled}
           onChange={(event) => onChange(seat, { kind: event.target.value as PlayerSeat["kind"] })}
         >
-          <option value="human">Humain</option>
+          <option value="human">Human</option>
           <option value="agent">Agent</option>
         </select>
       </label>
 
       <label className="grid gap-2 text-sm font-semibold text-slate-700">
-        Nom
+        Name
         <input
           className="rounded-2xl border border-slate-200 bg-white px-4 py-3"
           value={draftName}
@@ -1574,7 +1575,7 @@ function SeatEditor({
       {seat.kind === "agent" ? (
         <>
           <label className="grid gap-2 text-sm font-semibold text-slate-700">
-            Fournisseur
+            Provider
             <select
               className="rounded-2xl border border-slate-200 bg-white px-4 py-3"
               value={agentConfig.provider}
@@ -1601,7 +1602,7 @@ function SeatEditor({
           </label>
 
           <label className="grid gap-2 text-sm font-semibold text-slate-700">
-            Modèle
+            Model
             <input
               className="rounded-2xl border border-slate-200 bg-white px-4 py-3"
               value={draftModel}
@@ -1627,7 +1628,7 @@ function SeatEditor({
                 })
               }
             />
-            Autoriser cet agent à demander les coups possibles
+            Allow this agent to request legal moves
           </label>
 
           <label className="grid gap-2 text-sm font-semibold text-slate-700">
@@ -1661,7 +1662,7 @@ function SeatEditor({
           </label>
 
           <label className="grid gap-2 text-sm font-semibold text-slate-700">
-            Prompt système
+            System prompt
             <textarea
               className="min-h-[120px] rounded-2xl border border-slate-200 bg-white px-4 py-3"
               value={draftSystemPrompt}
@@ -1683,18 +1684,21 @@ function SeatEditor({
 function ConversationTraceCard({
   trace,
   event,
+  mode,
   expanded,
   rack,
   onToggle
 }: {
   trace: AgentTrace;
   event: AgentTraceEvent;
+  mode: ConversationMode;
   expanded: boolean;
   rack?: Tile[];
   onToggle: () => void;
 }) {
   const styles = traceEventClasses(event);
   const showRack = Boolean(rack && rack.length > 0 && (event.kind === "reasoning" || event.kind === "provider_reply" || event.kind === "status"));
+  const showFallbackStats = mode === "dev" && trace.turnCount > 0;
   return (
     <div className={`min-w-0 overflow-hidden rounded-[22px] border p-3 ${styles.card}`}>
       <button className="flex min-w-0 w-full items-start gap-3 text-left" onClick={onToggle}>
@@ -1702,7 +1706,14 @@ function ConversationTraceCard({
         <div className="min-w-0 flex-1">
           <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
             <div>
-              <p className="text-sm font-bold text-slate-900">{trace.playerName}</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-sm font-bold text-slate-900">{trace.playerName}</p>
+                {showFallbackStats ? (
+                  <span className="rounded-full bg-slate-900/8 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">
+                    {`fail: ${trace.fallbackCount}/${trace.turnCount}`}
+                  </span>
+                ) : null}
+              </div>
               <p className="text-xs text-slate-500">{event.title}</p>
             </div>
             <span className={`rounded-full px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] ${styles.badge}`}>
@@ -1725,7 +1736,7 @@ function ConversationTraceCard({
           </div>
           {showRack ? (
             <div className="mt-3 rounded-[16px] bg-white/60 p-3">
-              <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Chevalet</p>
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Rack</p>
               <SmallRack rack={rack ?? []} />
             </div>
           ) : null}
@@ -1820,7 +1831,7 @@ function LegalMoveCard({ move, onApply }: { move: LegalMove; onApply: () => void
         </div>
         <div className="grid content-start gap-1 text-[11px] text-slate-500">
           <span>{move.summary}</span>
-          <span>{move.placements.length} tuile(s)</span>
+          <span>{move.placements.length} tile(s)</span>
         </div>
       </div>
     </button>
@@ -1907,9 +1918,9 @@ function labelBonus(bonus: BoardCell["bonus"]): string {
     case "tl":
       return "TL";
     case "dw":
-      return "MD";
+      return "DW";
     case "tw":
-      return "MT";
+      return "TW";
     case "center":
       return "★";
     default:
@@ -2056,12 +2067,12 @@ function roomStatusLabel(status: RoomSummary["status"] | RoomView["status"]): st
     case "lobby":
       return "Lobby";
     case "paused":
-      return "Pause";
+      return "Paused";
     case "finished":
-      return "Terminée";
+      return "Finished";
     case "live":
     default:
-      return "En cours";
+      return "Live";
   }
 }
 

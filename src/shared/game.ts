@@ -188,7 +188,7 @@ export class ScrabbleGame {
 
     const player = this.getPlayer(playerId);
     if (!player) {
-      return { ok: false, error: "Joueur introuvable." };
+      return { ok: false, error: "Player not found." };
     }
 
     for (const placement of evaluation.value.placedTiles) {
@@ -213,7 +213,7 @@ export class ScrabbleGame {
       playerId,
       playerName: player.name,
       action: "play",
-      summary: `${mainWord} pour ${evaluation.value.totalScore} points`,
+      summary: `${mainWord} for ${evaluation.value.totalScore} points`,
       scoreDelta: evaluation.value.totalScore,
       createdAt: Date.now()
     };
@@ -228,17 +228,17 @@ export class ScrabbleGame {
   exchangeTiles(playerId: string, tileIds: string[]): { ok: true; move: TurnLog } | { ok: false; error: string } {
     const player = this.getPlayer(playerId);
     if (!player || this.getCurrentPlayer()?.id !== playerId) {
-      return { ok: false, error: "Ce n'est pas votre tour." };
+      return { ok: false, error: "It is not your turn." };
     }
     if (this.tileBag.length < tileIds.length) {
-      return { ok: false, error: "Le sac ne contient pas assez de lettres pour un échange." };
+      return { ok: false, error: "The bag does not contain enough letters for an exchange." };
     }
 
     const removed: Tile[] = [];
     for (const tileId of tileIds) {
       const tileIndex = player.rack.findIndex((tile) => tile.id === tileId);
       if (tileIndex === -1) {
-        return { ok: false, error: "Une des tuiles sélectionnées n'est pas dans votre chevalet." };
+        return { ok: false, error: "One of the selected tiles is not in your rack." };
       }
       removed.push(player.rack.splice(tileIndex, 1)[0]);
     }
@@ -254,7 +254,7 @@ export class ScrabbleGame {
       playerId,
       playerName: player.name,
       action: "exchange",
-      summary: `${tileIds.length} tuile(s) échangée(s)`,
+      summary: `${tileIds.length} tile(s) exchanged`,
       scoreDelta: 0,
       createdAt: Date.now()
     };
@@ -267,7 +267,7 @@ export class ScrabbleGame {
   pass(playerId: string): { ok: true; move: TurnLog } | { ok: false; error: string } {
     const player = this.getPlayer(playerId);
     if (!player || this.getCurrentPlayer()?.id !== playerId) {
-      return { ok: false, error: "Ce n'est pas votre tour." };
+      return { ok: false, error: "It is not your turn." };
     }
 
     this.turn += 1;
@@ -277,7 +277,7 @@ export class ScrabbleGame {
       playerId,
       playerName: player.name,
       action: "pass",
-      summary: "Passe son tour",
+      summary: "Passes the turn",
       scoreDelta: 0,
       createdAt: Date.now()
     };
@@ -346,21 +346,21 @@ export class ScrabbleGame {
     placements: PlacementInput[]
   ): { ok: true; value: MoveEvaluation } | { ok: false; error: string } {
     if (!this.started) {
-      return { ok: false, error: "La partie n'a pas commencé." };
+      return { ok: false, error: "The game has not started." };
     }
     if (this.finished) {
-      return { ok: false, error: "La partie est terminée." };
+      return { ok: false, error: "The game is finished." };
     }
     if (this.getCurrentPlayer()?.id !== playerId) {
-      return { ok: false, error: "Ce n'est pas votre tour." };
+      return { ok: false, error: "It is not your turn." };
     }
     if (placements.length === 0) {
-      return { ok: false, error: "Aucune tuile n'a été placée." };
+      return { ok: false, error: "No tile was placed." };
     }
 
     const player = this.getPlayer(playerId);
     if (!player) {
-      return { ok: false, error: "Joueur introuvable." };
+      return { ok: false, error: "Player not found." };
     }
 
     const placementKeys = new Set<string>();
@@ -370,22 +370,22 @@ export class ScrabbleGame {
     for (const placement of placements) {
       const key = `${placement.row}:${placement.col}`;
       if (placementKeys.has(key)) {
-        return { ok: false, error: `Plusieurs tuiles visent la case ${formatCoord(placement.row, placement.col)}.` };
+        return { ok: false, error: `Multiple tiles target square ${formatCoord(placement.row, placement.col)}.` };
       }
       placementKeys.add(key);
 
       if (!isWithinBoard(placement.row, placement.col)) {
-        return { ok: false, error: `La case ${formatCoord(placement.row, placement.col)} sort du plateau 15x15.` };
+        return { ok: false, error: `Square ${formatCoord(placement.row, placement.col)} is outside the 15x15 board.` };
       }
       if (this.board[placement.row][placement.col].tile) {
         const existing = this.board[placement.row][placement.col].tile;
         return {
           ok: false,
-          error: `La case ${formatCoord(placement.row, placement.col)} contient déjà ${existing ? tileFace(existing) : "une tuile"}.`
+          error: `Square ${formatCoord(placement.row, placement.col)} already contains ${existing ? tileFace(existing) : "a tile"}.`
         };
       }
       if (usedTileIds.has(placement.tileId)) {
-        return { ok: false, error: `La même tuile est utilisée plusieurs fois, notamment en ${formatCoord(placement.row, placement.col)}.` };
+        return { ok: false, error: `The same tile is used multiple times, including at ${formatCoord(placement.row, placement.col)}.` };
       }
       usedTileIds.add(placement.tileId);
 
@@ -393,7 +393,7 @@ export class ScrabbleGame {
       if (!rackTile) {
         return {
           ok: false,
-          error: `La tuile envoyée pour ${formatCoord(placement.row, placement.col)} n'appartient pas au chevalet du joueur.`
+          error: `The tile sent for ${formatCoord(placement.row, placement.col)} is not in the player's rack.`
         };
       }
 
@@ -405,7 +405,7 @@ export class ScrabbleGame {
         : { ...rackTile };
 
       if (tile.blank && !tile.assignedLetter) {
-        return { ok: false, error: `Le joker placé en ${formatCoord(placement.row, placement.col)} doit recevoir une lettre.` };
+        return { ok: false, error: `The blank placed at ${formatCoord(placement.row, placement.col)} must be assigned a letter.` };
       }
 
       placedTiles.push({
@@ -428,7 +428,7 @@ export class ScrabbleGame {
       } else {
         return {
           ok: false,
-          error: `Les tuiles doivent être alignées. Placements reçus: ${formatPlacementCoords(placements)}.`
+          error: `Tiles must be aligned. Received placements: ${formatPlacementCoords(placements)}.`
         };
       }
     }
@@ -447,7 +447,7 @@ export class ScrabbleGame {
         if (!this.cellHasTileAfterPlacements(row, col, placedTiles)) {
           return {
             ok: false,
-            error: `Le mot principal contient un trou en ${formatCoord(row, col)} entre ${formatCoord(sorted[0].row, sorted[0].col)} et ${formatCoord(sorted[sorted.length - 1].row, sorted[sorted.length - 1].col)}.`
+            error: `The main word has a gap at ${formatCoord(row, col)} between ${formatCoord(sorted[0].row, sorted[0].col)} and ${formatCoord(sorted[sorted.length - 1].row, sorted[sorted.length - 1].col)}.`
           };
         }
       }
@@ -458,7 +458,7 @@ export class ScrabbleGame {
       if (!reachesCenter) {
         return {
           ok: false,
-          error: `Le premier coup doit couvrir la case centrale ${formatCoord(CENTER.row, CENTER.col)}. Les coordonnées des outils sont 0-indexées.`
+          error: `The first move must cover the center square ${formatCoord(CENTER.row, CENTER.col)}. Tool coordinates are 0-indexed.`
         };
       }
     } else {
@@ -466,7 +466,7 @@ export class ScrabbleGame {
       if (!touchesExisting) {
         return {
           ok: false,
-          error: `Coup flottant: aucune tuile posée ne touche un mot existant. Placements reçus: ${formatPlacementCoords(placements)}.`
+          error: `Floating move: no placed tile touches an existing word. Received placements: ${formatPlacementCoords(placements)}.`
         };
       }
     }
@@ -475,7 +475,7 @@ export class ScrabbleGame {
     if (direction) {
       const mainWord = this.buildWord(placedTiles[0], direction, placedTiles);
       if (!mainWord || mainWord.word.length === 0) {
-        return { ok: false, error: "Le mot principal n'a pas pu être reconstruit." };
+        return { ok: false, error: "The main word could not be reconstructed." };
       }
       formedWords.push(mainWord);
       const crossDirection = direction === "horizontal" ? "vertical" : "horizontal";
@@ -504,7 +504,7 @@ export class ScrabbleGame {
     if (invalidWords.length > 0) {
       return {
         ok: false,
-        error: `Mot(s) invalide(s): ${invalidWords.map((word) => formatWordWithCoords(word)).join(" ; ")}`
+        error: `Invalid word(s): ${invalidWords.map((word) => formatWordWithCoords(word)).join(" ; ")}`
       };
     }
 
@@ -717,7 +717,7 @@ function serializePlacements(placements: PlacementInput[]): string {
 }
 
 function formatCoord(row: number, col: number): string {
-  return `row ${row}, col ${col} (affichage humain ${row + 1},${col + 1})`;
+  return `row ${row}, col ${col} (human display ${row + 1},${col + 1})`;
 }
 
 function formatPlacementCoords(placements: PlacementInput[]): string {

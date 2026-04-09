@@ -15,7 +15,7 @@ def render_case_diff(case: BenchmarkCase, predicted_board: list[list[str]] | Non
     before = case["board_before"]
     expected = case["board_after"]
     lines: list[str] = []
-    header = f"{CYAN}{case['case_id']}{RESET} {case['difficulty']} mot={case['target_word']} rack={''.join(case['rack'])}"
+    header = f"{CYAN}{case['case_id']}{RESET} {case['difficulty']} word={case['target_word']} rack={''.join(case['rack'])}"
     lines.append(header)
     lines.append("    " + " ".join(f"{index:>2}" for index in range(15)))
     for row in range(15):

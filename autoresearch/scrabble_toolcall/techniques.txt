@@ -1,0 +1,4 @@
+placements_json
+board_matrix_full
+delta_sparse
+line_slots

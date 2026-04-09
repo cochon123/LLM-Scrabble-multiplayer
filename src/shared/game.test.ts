@@ -44,7 +44,7 @@ describe("ScrabbleGame", () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.error).toContain("case centrale");
+      expect(result.error).toContain("center square");
     }
   });
 
@@ -112,7 +112,7 @@ describe("ScrabbleGame", () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.error).toContain("Mot(s) invalide(s)");
+      expect(result.error).toContain("Invalid word(s)");
       expect(result.error).toContain("AIZ");
       expect(result.error).toContain("8,8");
       expect(result.error).toContain("8,10");
@@ -140,7 +140,7 @@ describe("ScrabbleGame", () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.error).toContain("Coup flottant");
+      expect(result.error).toContain("Floating move");
       expect(result.error).toContain("1,1");
     }
   });

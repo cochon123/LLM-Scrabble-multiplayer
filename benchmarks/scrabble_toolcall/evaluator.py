@@ -117,11 +117,13 @@ def evaluate_sparse_cells(
         seen_coords.add((row, col))
         if row < 0 or row >= 15 or col < 0 or col >= 15:
             return EvaluationOutcome(False, "out_of_bounds", payload, None, f"Hors plateau: {row},{col}")
-        if is_letter(board_before[row][col]):
-            return EvaluationOutcome(False, "overwrote_existing_tile", payload, None, f"Case deja occupee: {row},{col}")
         normalized_letter = letter.upper()
         if len(normalized_letter) != 1 or not normalized_letter.isalpha():
             return EvaluationOutcome(False, "technique_specific_invalid_payload", payload, None, f"Lettre invalide: {letter!r}")
+        if is_letter(board_before[row][col]):
+            if board_before[row][col] != normalized_letter:
+                return EvaluationOutcome(False, "overwrote_existing_tile", payload, None, f"Case deja occupee: {row},{col}")
+            continue
         used_letters.append(normalized_letter)
         board_after[row][col] = normalized_letter
 
@@ -197,7 +199,9 @@ def evaluate_line_slots(case: BenchmarkCase, payload: dict[str, Any], arguments:
         if normalized != expected_letter:
             return EvaluationOutcome(False, "wrong_letter_at_coordinate", payload, board_after, f"Mauvaise lettre en {row},{col}")
         if is_letter(before):
-            return EvaluationOutcome(False, "overwrote_existing_tile", payload, board_after, f"Case deja occupee: {row},{col}")
+            if before != normalized:
+                return EvaluationOutcome(False, "overwrote_existing_tile", payload, board_after, f"Case deja occupee: {row},{col}")
+            continue
         used_letters.append(normalized)
         board_after[row][col] = normalized
 
