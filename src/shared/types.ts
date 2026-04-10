@@ -6,6 +6,14 @@ export type ViewerRole = "player" | "spectator";
 export type RoomStatus = "lobby" | "live" | "paused" | "finished";
 export type ConversationMode = "user" | "advanced" | "dev";
 export type TraceVisibilityMode = ConversationMode;
+export type DefaultApiKeys = Partial<Record<AgentProvider, string>>;
+
+export interface AuthUserView {
+  userId: string;
+  nickname: string;
+  isAdmin: boolean;
+  defaultApiKeys: DefaultApiKeys;
+}
 
 export interface Tile {
   id: string;

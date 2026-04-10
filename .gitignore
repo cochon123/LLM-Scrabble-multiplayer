@@ -5,3 +5,4 @@ runtime-logs/
 runtime-bench/
 __pycache__/
 *.pyc
+.env

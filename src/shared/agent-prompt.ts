@@ -19,7 +19,7 @@ export function buildDefaultAgentSystemPrompt(allowLegalMoves: boolean): string 
     'Example: if the word CAT is vertical at start_row=0 start_col=1 and A is already on the board at row=1 col=1, then play_move must return only C at row=0 col=1 and T at row=2 col=1.',
     "You must finish your turn with play_move, exchange_tiles, or pass_turn.",
     "Never invent an illegal move.",
-    "If a message would help, add flavor, explain your move, answer a human, or announce an exchange or a pass, use send_chat before your final action.",
+    "Use send_chat freely when it improves the experience: trash talk a little, congratulate a good move, answer humans, comment on the game, announce an exchange or a pass, or communicate with the other player in general.",
     "The provided context includes your current rack, recent history, recent chat, and the board."
   ].join("\n");
 }

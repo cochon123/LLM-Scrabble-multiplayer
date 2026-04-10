@@ -8,6 +8,7 @@ import type {
   AgentTraceChunk,
   AgentTraceDelta,
   AgentTraceEvent,
+  AuthUserView,
   BoardCell,
   ChatMessage,
   ClientToServerEvents,
@@ -25,6 +26,7 @@ import type {
 const CLIENT_ID_KEY = "scrabble-codex-client-id";
 const DISPLAY_NAME_KEY = "scrabble-codex-display-name";
 const CONVERSATION_MODE_KEY = "scrabble-codex-conversation-mode";
+const AUTH_TOKEN_KEY = "scrabble-codex-auth-token";
 const API_BASE_URL = import.meta.env.DEV ? "http://localhost:3001" : "";
 
 type ClientSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
@@ -50,6 +52,12 @@ export function App() {
   const [route, setRoute] = useState<Route>(() => parseRoute(window.location.pathname));
   const [clientId] = useState(() => getOrCreateClientId());
   const [displayName, setDisplayName] = useState(() => localStorage.getItem(DISPLAY_NAME_KEY) || "Player");
+  const [authToken, setAuthToken] = useState(() => localStorage.getItem(AUTH_TOKEN_KEY) || "");
+  const [authUser, setAuthUser] = useState<AuthUserView | null>(null);
+  const [authDraftNickname, setAuthDraftNickname] = useState(() => localStorage.getItem(DISPLAY_NAME_KEY) || "");
+  const [authDraftPassword, setAuthDraftPassword] = useState("");
+  const [authLoading, setAuthLoading] = useState(Boolean(localStorage.getItem(AUTH_TOKEN_KEY)));
+  const [authError, setAuthError] = useState("");
   const [conversationMode, setConversationMode] = useState<ConversationMode>(
     () => (localStorage.getItem(CONVERSATION_MODE_KEY) as ConversationMode) || "user"
   );
@@ -74,15 +82,16 @@ export function App() {
   const socket = useMemo<ClientSocket>(() => {
     const serverUrl = import.meta.env.DEV ? "http://localhost:3001" : undefined;
     return io(serverUrl, {
-      autoConnect: true,
+      autoConnect: Boolean(authToken),
       transports: ["websocket"],
       reconnection: true,
       auth: {
         clientId,
-        displayName
+        displayName,
+        authToken
       }
     });
-  }, [clientId]);
+  }, [clientId, authToken, displayName]);
 
   useEffect(() => {
     const handlePopState = () => setRoute(parseRoute(window.location.pathname));
@@ -93,17 +102,70 @@ export function App() {
   useEffect(() => {
     socket.auth = {
       clientId,
-      displayName
+      displayName,
+      authToken
     };
-  }, [socket, clientId, displayName]);
+  }, [socket, clientId, displayName, authToken]);
 
   useEffect(() => {
     localStorage.setItem(DISPLAY_NAME_KEY, displayName);
   }, [displayName]);
 
   useEffect(() => {
+    if (authToken) {
+      localStorage.setItem(AUTH_TOKEN_KEY, authToken);
+    } else {
+      localStorage.removeItem(AUTH_TOKEN_KEY);
+    }
+  }, [authToken]);
+
+  useEffect(() => {
     localStorage.setItem(CONVERSATION_MODE_KEY, conversationMode);
   }, [conversationMode]);
+
+  useEffect(() => {
+    if (!authToken) {
+      setAuthUser(null);
+      setAuthLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setAuthLoading(true);
+    void fetch(`${API_BASE_URL}/api/auth/me`, {
+      headers: authHeaders(authToken)
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error("unauthorized");
+        }
+        return (await response.json()) as { user: AuthUserView };
+      })
+      .then((payload) => {
+        if (cancelled) {
+          return;
+        }
+        setAuthUser(payload.user);
+        setDisplayName(payload.user.nickname);
+        setAuthDraftNickname(payload.user.nickname);
+        setAuthError("");
+      })
+      .catch(() => {
+        if (cancelled) {
+          return;
+        }
+        setAuthToken("");
+        setAuthUser(null);
+        setAuthError("Please sign in.");
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setAuthLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [authToken]);
 
   useEffect(() => {
     function acceptSync(nextView: RoomView): boolean {
@@ -217,15 +279,24 @@ export function App() {
     if (route.page !== "home") {
       return;
     }
+    if (!authToken) {
+      setRooms([]);
+      return;
+    }
     expectedRoomIdRef.current = null;
-    ensureSocketReady(socket, clientId, displayName, () => {
+    ensureSocketReady(socket, clientId, displayName, authToken, () => {
       socket.emit("leave_room");
     });
     let cancelled = false;
 
     const loadRooms = async () => {
       try {
-        const response = await fetch(`${API_BASE_URL}/api/rooms`);
+        const response = await fetch(`${API_BASE_URL}/api/rooms`, {
+          headers: authHeaders(authToken)
+        });
+        if (!response.ok) {
+          throw new Error(String(response.status));
+        }
         const payload = (await response.json()) as RoomDirectoryResponse;
         if (!cancelled) {
           setRooms(payload.rooms);
@@ -246,12 +317,18 @@ export function App() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [route.page]);
+  }, [route.page, authToken, socket, clientId, displayName]);
 
   useEffect(() => {
     if (route.page !== "room") {
       setView(null);
       setLoadingRoom(false);
+      return;
+    }
+    if (!authToken) {
+      setView(null);
+      setLoadingRoom(false);
+      setError("Please sign in.");
       return;
     }
 
@@ -263,7 +340,10 @@ export function App() {
     const loadRoom = async () => {
       try {
         const response = await fetch(
-          `${API_BASE_URL}/api/rooms/${encodeURIComponent(route.roomId)}?clientId=${encodeURIComponent(clientId)}`
+          `${API_BASE_URL}/api/rooms/${encodeURIComponent(route.roomId)}?clientId=${encodeURIComponent(clientId)}`,
+          {
+            headers: authHeaders(authToken)
+          }
         );
         if (!response.ok) {
           throw new Error(String(response.status));
@@ -286,14 +366,14 @@ export function App() {
     setPendingAction("watch");
     pendingActionRef.current = "watch";
     expectedRoomIdRef.current = route.roomId;
-    ensureSocketReady(socket, clientId, displayName, () => {
+    ensureSocketReady(socket, clientId, displayName, authToken, () => {
       socket.emit("watch_room", { roomId: route.roomId, displayName });
     });
 
     return () => {
       cancelled = true;
     };
-  }, [route, socket, clientId, displayName]);
+  }, [route, socket, clientId, displayName, authToken]);
 
   useEffect(() => {
     setTentativePlacements([]);
@@ -328,16 +408,24 @@ export function App() {
   }, [conversationFeed]);
 
   function createRoom() {
+    if (!authUser) {
+      setAuthError("Please sign in.");
+      return;
+    }
     setPendingAction("create");
     pendingActionRef.current = "create";
     expectedRoomIdRef.current = view?.roomId ?? null;
-    ensureSocketReady(socket, clientId, displayName, () => {
+    ensureSocketReady(socket, clientId, displayName, authToken, () => {
       socket.emit("leave_room");
       socket.emit("create_room", { displayName });
     });
   }
 
   function joinRoom(targetRoomId?: string) {
+    if (!authUser) {
+      setAuthError("Please sign in.");
+      return;
+    }
     const nextRoomId = (targetRoomId ?? roomCode).trim();
     if (!nextRoomId) {
       setError("Enter a room code.");
@@ -346,7 +434,7 @@ export function App() {
     setPendingAction("join");
     pendingActionRef.current = "join";
     expectedRoomIdRef.current = nextRoomId;
-    ensureSocketReady(socket, clientId, displayName, () => {
+    ensureSocketReady(socket, clientId, displayName, authToken, () => {
       socket.emit("leave_room");
       socket.emit("join_room", { roomId: nextRoomId, displayName });
     });
@@ -354,6 +442,90 @@ export function App() {
 
   function watchRoom(nextRoomId: string) {
     navigateTo(setRoute, `/rooms/${nextRoomId}`);
+  }
+
+  async function deleteRoom(roomId: string) {
+    if (!authUser?.isAdmin || !authToken) {
+      return;
+    }
+    if (!window.confirm(`Delete game ${roomId}? This will also stop a live game.`)) {
+      return;
+    }
+    const response = await fetch(`${API_BASE_URL}/api/games/${encodeURIComponent(roomId)}`, {
+      method: "DELETE",
+      headers: authHeaders(authToken)
+    });
+    if (!response.ok) {
+      const payload = (await response.json().catch(() => ({ error: "Could not delete game." }))) as { error?: string };
+      setError(payload.error || "Could not delete game.");
+      return;
+    }
+    setRooms((current) => current.filter((room) => room.roomId !== roomId));
+    if (route.page === "room" && route.roomId === roomId) {
+      navigateTo(setRoute, "/");
+      setView(null);
+    }
+  }
+
+  async function authenticate(mode: "login" | "register") {
+    setAuthLoading(true);
+    setAuthError("");
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/auth/${mode}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          nickname: authDraftNickname,
+          password: authDraftPassword
+        })
+      });
+      const payload = (await response.json()) as { token?: string; user?: AuthUserView; error?: string };
+      if (!response.ok || !payload.token || !payload.user) {
+        throw new Error(payload.error || `${mode} failed.`);
+      }
+      setAuthToken(payload.token);
+      setAuthUser(payload.user);
+      setDisplayName(payload.user.nickname);
+      setAuthDraftNickname(payload.user.nickname);
+      setAuthDraftPassword("");
+      setAuthError("");
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "Authentication failed.");
+    } finally {
+      setAuthLoading(false);
+    }
+  }
+
+  function logout() {
+    setAuthToken("");
+    setAuthUser(null);
+    setView(null);
+    setRooms([]);
+    setRoomCode("");
+    setChatDraft("");
+    socket.disconnect();
+    navigateTo(setRoute, "/");
+  }
+
+  async function saveDefaultApiKey(provider: AgentProvider, apiKey: string) {
+    if (!authToken) {
+      return;
+    }
+    const response = await fetch(`${API_BASE_URL}/api/auth/default-api-key`, {
+      method: "POST",
+      headers: {
+        ...authHeaders(authToken),
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ provider, apiKey })
+    });
+    const payload = (await response.json()) as { user?: AuthUserView; error?: string };
+    if (!response.ok || !payload.user) {
+      throw new Error(payload.error || "Could not save default API key.");
+    }
+    setAuthUser(payload.user);
   }
 
   function updateSeat(seat: PlayerSeat, patch: Partial<PlayerSeat> & { agentConfig?: AgentConfig }) {
@@ -479,7 +651,7 @@ export function App() {
     }
     setPendingAction("submit_move");
     pendingActionRef.current = "submit_move";
-    ensureSocketReady(socket, clientId, displayName, () => {
+    ensureSocketReady(socket, clientId, displayName, authToken, () => {
       socket.emit("submit_move", {
         roomId: view.roomId,
         placements: tentativePlacements
@@ -493,7 +665,7 @@ export function App() {
     }
     setPendingAction("exchange_tiles");
     pendingActionRef.current = "exchange_tiles";
-    ensureSocketReady(socket, clientId, displayName, () => {
+    ensureSocketReady(socket, clientId, displayName, authToken, () => {
       socket.emit("exchange_tiles", {
         roomId: view.roomId,
         tileIds: exchangeSelection
@@ -507,7 +679,7 @@ export function App() {
     }
     setPendingAction("pass");
     pendingActionRef.current = "pass";
-    ensureSocketReady(socket, clientId, displayName, () => {
+    ensureSocketReady(socket, clientId, displayName, authToken, () => {
       socket.emit("pass_turn", { roomId: view.roomId });
     });
   }
@@ -518,7 +690,7 @@ export function App() {
     }
     setPendingAction("chat");
     pendingActionRef.current = "chat";
-    ensureSocketReady(socket, clientId, displayName, () => {
+    ensureSocketReady(socket, clientId, displayName, authToken, () => {
       socket.emit("send_chat", {
         roomId: view.roomId,
         text: chatDraft
@@ -533,7 +705,7 @@ export function App() {
     }
     setPendingAction("legal_moves");
     pendingActionRef.current = "legal_moves";
-    ensureSocketReady(socket, clientId, displayName, () => {
+    ensureSocketReady(socket, clientId, displayName, authToken, () => {
       socket.emit("get_legal_moves", { roomId: view.roomId });
     });
   }
@@ -544,7 +716,7 @@ export function App() {
     }
     setPendingAction("pause");
     pendingActionRef.current = "pause";
-    ensureSocketReady(socket, clientId, displayName, () => {
+    ensureSocketReady(socket, clientId, displayName, authToken, () => {
       socket.emit("toggle_pause", { roomId: view.roomId });
     });
   }
@@ -553,7 +725,7 @@ export function App() {
     if (!view) {
       return;
     }
-    ensureSocketReady(socket, clientId, displayName, () => {
+    ensureSocketReady(socket, clientId, displayName, authToken, () => {
       socket.emit("start_game", { roomId: view.roomId });
     });
   }
@@ -574,8 +746,32 @@ export function App() {
     : "Waiting";
 
   return (
-    <div className="h-screen overflow-hidden bg-slate-50 text-slate-900">
-      {route.page === "home" ? (
+    <div className={`bg-slate-50 text-slate-900 ${route.page === "home" ? "min-h-screen" : "h-screen overflow-hidden"}`}>
+      {!authUser ? (
+        <HomePage
+          displayName={displayName}
+          setDisplayName={setDisplayName}
+          roomCode={roomCode}
+          setRoomCode={setRoomCode}
+          rooms={[]}
+          error={error}
+          authUser={null}
+          authDraftNickname={authDraftNickname}
+          setAuthDraftNickname={setAuthDraftNickname}
+          authDraftPassword={authDraftPassword}
+          setAuthDraftPassword={setAuthDraftPassword}
+          authLoading={authLoading}
+          authError={authError}
+          onLogin={() => void authenticate("login")}
+          onRegister={() => void authenticate("register")}
+          onLogout={logout}
+          onCreate={createRoom}
+          onJoin={() => joinRoom()}
+          onJoinRoom={(nextRoomId) => joinRoom(nextRoomId)}
+          onWatch={watchRoom}
+          onDelete={deleteRoom}
+        />
+      ) : route.page === "home" ? (
         <HomePage
           displayName={displayName}
           setDisplayName={setDisplayName}
@@ -583,10 +779,21 @@ export function App() {
           setRoomCode={setRoomCode}
           rooms={rooms}
           error={error}
+          authUser={authUser}
+          authDraftNickname={authDraftNickname}
+          setAuthDraftNickname={setAuthDraftNickname}
+          authDraftPassword={authDraftPassword}
+          setAuthDraftPassword={setAuthDraftPassword}
+          authLoading={authLoading}
+          authError={authError}
+          onLogin={() => void authenticate("login")}
+          onRegister={() => void authenticate("register")}
+          onLogout={logout}
           onCreate={createRoom}
           onJoin={() => joinRoom()}
           onJoinRoom={(nextRoomId) => joinRoom(nextRoomId)}
           onWatch={watchRoom}
+          onDelete={deleteRoom}
         />
       ) : (
         <RoomPage
@@ -610,6 +817,8 @@ export function App() {
           onJoinAsPlayer={() => joinRoom(route.roomId)}
           activeHumanSeatAvailable={activeHumanSeatAvailable}
           updateSeat={updateSeat}
+          defaultApiKeys={authUser.defaultApiKeys}
+          onSaveDefaultApiKey={(provider, apiKey) => void saveDefaultApiKey(provider, apiKey)}
           updateRoomOption={updateRoomOption}
           startGame={startGame}
           myTurn={myTurn}
@@ -640,16 +849,25 @@ export function App() {
 }
 
 function HomePage({
-  displayName,
-  setDisplayName,
   roomCode,
   setRoomCode,
   rooms,
   error,
+  authUser,
+  authDraftNickname,
+  setAuthDraftNickname,
+  authDraftPassword,
+  setAuthDraftPassword,
+  authLoading,
+  authError,
+  onLogin,
+  onRegister,
+  onLogout,
   onCreate,
   onJoin,
   onJoinRoom,
-  onWatch
+  onWatch,
+  onDelete
 }: {
   displayName: string;
   setDisplayName: (value: string) => void;
@@ -657,10 +875,21 @@ function HomePage({
   setRoomCode: (value: string) => void;
   rooms: RoomSummary[];
   error: string;
+  authUser: AuthUserView | null;
+  authDraftNickname: string;
+  setAuthDraftNickname: (value: string) => void;
+  authDraftPassword: string;
+  setAuthDraftPassword: (value: string) => void;
+  authLoading: boolean;
+  authError: string;
+  onLogin: () => void;
+  onRegister: () => void;
+  onLogout: () => void;
   onCreate: () => void;
   onJoin: () => void;
   onJoinRoom: (roomId: string) => void;
   onWatch: (roomId: string) => void;
+  onDelete: (roomId: string) => void;
 }) {
   return (
     <div className="min-h-screen overflow-y-auto bg-slate-50 px-4 py-6 md:px-6">
@@ -676,31 +905,76 @@ function HomePage({
               </p>
             </div>
             <div className="grid gap-4 rounded-[28px] bg-slate-50 p-5">
-              <label className="grid gap-2 text-sm font-semibold text-slate-700">
-                Name
-                <input
-                  className="rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-indigo-500"
-                  value={displayName}
-                  onChange={(event) => setDisplayName(event.target.value)}
-                />
-              </label>
-              <label className="grid gap-2 text-sm font-semibold text-slate-700">
-                Room code
-                <input
-                  className="rounded-2xl border border-slate-200 bg-white px-4 py-3 uppercase outline-none transition focus:border-indigo-500"
-                  value={roomCode}
-                  onChange={(event) => setRoomCode(event.target.value)}
-                />
-              </label>
-              <div className="flex flex-wrap gap-3">
-                <button className="rounded-2xl bg-indigo-600 px-5 py-3 font-semibold text-white" onClick={onCreate}>
-                  Create room
-                </button>
-                <button className="rounded-2xl bg-slate-200 px-5 py-3 font-semibold text-slate-800" onClick={onJoin}>
-                  Join as player
-                </button>
-              </div>
-              {error ? <InlineError message={error} /> : null}
+              {authUser ? (
+                <>
+                  <div className="rounded-[24px] bg-white p-4">
+                    <p className="text-sm font-semibold text-slate-500">Signed in as</p>
+                    <div className="mt-1 flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-xl font-bold text-slate-900">{authUser.nickname}</p>
+                        <p className="text-sm text-slate-500">{authUser.isAdmin ? "Admin" : "User"}</p>
+                      </div>
+                      <button className="rounded-2xl bg-slate-200 px-4 py-3 font-semibold text-slate-800" onClick={onLogout}>
+                        Sign out
+                      </button>
+                    </div>
+                  </div>
+                  <label className="grid gap-2 text-sm font-semibold text-slate-700">
+                    Room code
+                    <input
+                      className="rounded-2xl border border-slate-200 bg-white px-4 py-3 uppercase outline-none transition focus:border-indigo-500"
+                      value={roomCode}
+                      onChange={(event) => setRoomCode(event.target.value)}
+                    />
+                  </label>
+                  <div className="flex flex-wrap gap-3">
+                    <button className="rounded-2xl bg-indigo-600 px-5 py-3 font-semibold text-white" onClick={onCreate}>
+                      Create room
+                    </button>
+                    <button className="rounded-2xl bg-slate-200 px-5 py-3 font-semibold text-slate-800" onClick={onJoin}>
+                      Join as player
+                    </button>
+                  </div>
+                  {error ? <InlineError message={error} /> : null}
+                </>
+              ) : (
+                <>
+                  <label className="grid gap-2 text-sm font-semibold text-slate-700">
+                    Nickname
+                    <input
+                      className="rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-indigo-500"
+                      value={authDraftNickname}
+                      onChange={(event) => setAuthDraftNickname(event.target.value)}
+                    />
+                  </label>
+                  <label className="grid gap-2 text-sm font-semibold text-slate-700">
+                    Password
+                    <input
+                      type="password"
+                      className="rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-indigo-500"
+                      value={authDraftPassword}
+                      onChange={(event) => setAuthDraftPassword(event.target.value)}
+                    />
+                  </label>
+                  <div className="flex flex-wrap gap-3">
+                    <button
+                      className="rounded-2xl bg-indigo-600 px-5 py-3 font-semibold text-white disabled:opacity-50"
+                      onClick={onLogin}
+                      disabled={authLoading}
+                    >
+                      Sign in
+                    </button>
+                    <button
+                      className="rounded-2xl bg-slate-200 px-5 py-3 font-semibold text-slate-800 disabled:opacity-50"
+                      onClick={onRegister}
+                      disabled={authLoading}
+                    >
+                      Register
+                    </button>
+                  </div>
+                  {authError ? <InlineError message={authError} /> : null}
+                </>
+              )}
             </div>
           </div>
         </section>
@@ -721,6 +995,7 @@ function HomePage({
                 room={room}
                 onWatch={() => onWatch(room.roomId)}
                 onJoin={room.status === "lobby" && room.seatSummaries.some((seat) => seat.enabled && seat.kind === "human" && !seat.occupied) ? () => onJoinRoom(room.roomId) : null}
+                onDelete={authUser?.isAdmin ? () => onDelete(room.roomId) : null}
               />
             ))}
             {rooms.length === 0 ? (
@@ -743,6 +1018,8 @@ function RoomPage(props: {
   setDisplayName: (value: string) => void;
   error: string;
   isHost: boolean;
+  defaultApiKeys: AuthUserView["defaultApiKeys"];
+  onSaveDefaultApiKey: (provider: AgentProvider, apiKey: string) => void;
   boardTitle: string;
   conversationMode: ConversationMode;
   onCycleMode: () => void;
@@ -787,6 +1064,8 @@ function RoomPage(props: {
     setDisplayName,
     error,
     isHost,
+    defaultApiKeys,
+    onSaveDefaultApiKey,
     boardTitle,
     conversationMode,
     onCycleMode,
@@ -860,7 +1139,11 @@ function RoomPage(props: {
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden px-3 py-3 md:px-4">
+    <div
+      className={`flex h-full min-h-0 flex-col px-3 py-3 md:px-4 ${
+        view.status === "lobby" ? "overflow-y-auto overflow-x-hidden" : "overflow-hidden"
+      }`}
+    >
       <header className="mb-3 rounded-[28px] bg-white px-5 py-4 shadow-xl shadow-slate-200/80">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
@@ -872,14 +1155,10 @@ function RoomPage(props: {
             </p>
           </div>
           <div className="grid gap-3 md:min-w-[280px]">
-            <label className="grid gap-2 text-sm font-semibold text-slate-700">
-              Name
-              <input
-                className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none transition focus:border-indigo-500"
-                value={displayName}
-                onChange={(event) => setDisplayName(event.target.value)}
-              />
-            </label>
+            <div className="rounded-[24px] bg-slate-50 px-4 py-3">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Account</p>
+              <p className="mt-1 text-lg font-bold text-slate-900">{displayName}</p>
+            </div>
             <div className="flex flex-wrap items-center justify-end gap-2">
               <span className="rounded-full bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-600">
                 {view.viewerRole === "player" ? "Player" : "Spectator"}
@@ -894,7 +1173,11 @@ function RoomPage(props: {
         </div>
       </header>
 
-      <main className="grid min-h-0 flex-1 gap-3 xl:grid-cols-[280px_minmax(0,0.92fr)_520px]">
+      <main
+        className={`grid gap-3 xl:grid-cols-[280px_minmax(0,0.92fr)_520px] ${
+          view.status === "lobby" ? "items-start" : "min-h-0 flex-1"
+        }`}
+      >
         <aside className="min-h-0 overflow-y-auto rounded-[28px] bg-white p-4 shadow-xl shadow-slate-200/80">
           <div className="mb-4">
             <p className="text-sm font-semibold uppercase tracking-[0.28em] text-slate-400">Leaderboard</p>
@@ -917,8 +1200,10 @@ function RoomPage(props: {
               view={view}
               error={error}
               isHost={isHost}
-              updateSeat={updateSeat}
-              updateRoomOption={updateRoomOption}
+          updateSeat={updateSeat}
+          defaultApiKeys={defaultApiKeys}
+          onSaveDefaultApiKey={onSaveDefaultApiKey}
+          updateRoomOption={updateRoomOption}
               startGame={startGame}
             />
           ) : (
@@ -973,6 +1258,8 @@ function LobbyView({
   error,
   isHost,
   updateSeat,
+  defaultApiKeys,
+  onSaveDefaultApiKey,
   updateRoomOption,
   startGame
 }: {
@@ -980,6 +1267,8 @@ function LobbyView({
   error: string;
   isHost: boolean;
   updateSeat: (seat: PlayerSeat, patch: Partial<PlayerSeat> & { agentConfig?: AgentConfig }) => void;
+  defaultApiKeys: AuthUserView["defaultApiKeys"];
+  onSaveDefaultApiKey: (provider: AgentProvider, apiKey: string) => void;
   updateRoomOption: (showLegalMoves: boolean) => void;
   startGame: () => void;
 }) {
@@ -1015,7 +1304,14 @@ function LobbyView({
 
       <div className="grid gap-4 xl:grid-cols-2">
         {view.game.players.map((seat) => (
-          <SeatEditor key={seat.id} seat={seat} disabled={!isHost || view.game.started} onChange={updateSeat} />
+          <SeatEditor
+            key={seat.id}
+            seat={seat}
+            disabled={!isHost || view.game.started}
+            defaultApiKeys={defaultApiKeys}
+            onSaveDefaultApiKey={onSaveDefaultApiKey}
+            onChange={updateSeat}
+          />
         ))}
       </div>
     </div>
@@ -1268,7 +1564,12 @@ function ConversationPanel({
         <div className="grid gap-3">
           {items.map((item) =>
             item.type === "chat" ? (
-              <ChatRow key={item.id} message={item.message} />
+              <ChatRow
+                key={item.id}
+                message={item.message}
+                seat={view.game.players.find((player) => player.id === item.message.authorId)}
+                trace={view.agentTraces.find((trace) => trace.playerId === item.message.authorId)}
+              />
             ) : (
               <ConversationTraceCard
                 key={item.id}
@@ -1326,7 +1627,17 @@ function LeaderboardCard({ player }: { player: PlayerSeat }) {
   );
 }
 
-function RoomCard({ room, onWatch, onJoin }: { room: RoomSummary; onWatch: () => void; onJoin: (() => void) | null }) {
+function RoomCard({
+  room,
+  onWatch,
+  onJoin,
+  onDelete
+}: {
+  room: RoomSummary;
+  onWatch: () => void;
+  onJoin: (() => void) | null;
+  onDelete: (() => void) | null;
+}) {
   return (
     <div className="grid gap-4 rounded-[24px] bg-slate-50 p-5">
       <div className="flex items-center justify-between gap-3">
@@ -1358,6 +1669,11 @@ function RoomCard({ room, onWatch, onJoin }: { room: RoomSummary; onWatch: () =>
         <button className="rounded-2xl bg-indigo-600 px-4 py-3 font-semibold text-white" onClick={onWatch}>
           Watch
         </button>
+        {onDelete ? (
+          <button className="rounded-2xl bg-red-100 px-4 py-3 font-semibold text-red-700" onClick={onDelete}>
+            Delete
+          </button>
+        ) : null}
         {onJoin ? (
           <button className="rounded-2xl bg-slate-200 px-4 py-3 font-semibold text-slate-800" onClick={onJoin}>
             Join
@@ -1495,10 +1811,14 @@ function RackTile({
 function SeatEditor({
   seat,
   disabled,
+  defaultApiKeys,
+  onSaveDefaultApiKey,
   onChange
 }: {
   seat: PlayerSeat;
   disabled: boolean;
+  defaultApiKeys: AuthUserView["defaultApiKeys"];
+  onSaveDefaultApiKey: (provider: AgentProvider, apiKey: string) => void;
   onChange: (seat: PlayerSeat, patch: Partial<PlayerSeat> & { agentConfig?: AgentConfig }) => void;
 }) {
   const defaultPromptForSeat = buildDefaultAgentSystemPrompt(Boolean(seat.agentConfig?.allowLegalMoves));
@@ -1584,12 +1904,15 @@ function SeatEditor({
               onChange={(event) => {
                 const nextProvider = event.target.value as AgentConfig["provider"];
                 const nextBaseUrl = defaultBaseUrlForProvider(nextProvider);
+                const nextApiKey = defaultApiKeys[nextProvider] ?? "";
                 setDraftBaseUrl(nextBaseUrl);
+                setDraftApiKey(nextApiKey);
                 onChange(seat, {
                   agentConfig: {
                     ...agentConfig,
                     provider: nextProvider,
                     baseUrl: nextBaseUrl,
+                    apiKey: nextApiKey,
                     systemPrompt: agentConfig.systemPrompt ?? defaultPromptForSeat
                   }
                 });
@@ -1662,6 +1985,9 @@ function SeatEditor({
               onBlur={() => {
                 if (draftApiKey !== (agentConfig.apiKey ?? "")) {
                   onChange(seat, { agentConfig: { ...agentConfig, apiKey: draftApiKey, systemPrompt: agentConfig.systemPrompt ?? defaultPromptForSeat } });
+                  if (draftApiKey.trim() && window.confirm(`Use this API key as the default for ${agentConfig.provider}?`)) {
+                    onSaveDefaultApiKey(agentConfig.provider, draftApiKey.trim());
+                  }
                 }
               }}
             />
@@ -1707,9 +2033,8 @@ function ConversationTraceCard({
   const showFallbackStats = mode === "dev" && trace.turnCount > 0;
   return (
     <div className={`min-w-0 overflow-hidden rounded-[22px] border p-3 ${styles.card}`}>
-      <button className="flex min-w-0 w-full items-start gap-3 text-left" onClick={onToggle}>
-        <ModelLogo trace={trace} size="sm" />
-        <div className="min-w-0 flex-1">
+      <button className="grid min-w-0 w-full gap-3 text-left" onClick={onToggle}>
+        <div className="min-w-0">
           <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
             <div>
               <div className="flex flex-wrap items-center gap-2">
@@ -1720,7 +2045,6 @@ function ConversationTraceCard({
                   </span>
                 ) : null}
               </div>
-              <p className="text-xs text-slate-500">{event.title}</p>
             </div>
             <span className={`rounded-full px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] ${styles.badge}`}>
               {event.kind}
@@ -1747,16 +2071,27 @@ function ConversationTraceCard({
             </div>
           ) : null}
         </div>
+        <div className="flex items-end justify-start">
+          <ModelLogo trace={trace} size="sm" />
+        </div>
       </button>
     </div>
   );
 }
 
-function ChatRow({ message }: { message: ChatMessage }) {
+function ChatRow({
+  message,
+  seat,
+  trace
+}: {
+  message: ChatMessage;
+  seat?: PlayerSeat;
+  trace?: AgentTrace;
+}) {
   const outgoing = message.kind === "agent";
   return (
     <div className={`flex gap-3 ${outgoing ? "flex-row" : "flex-row-reverse"}`}>
-      <ModelLogo name={message.authorName} size="sm" />
+      <ModelLogo seat={seat} trace={trace} name={message.authorName} size="sm" />
       <div
         className={`max-w-[85%] rounded-[22px] px-4 py-3 shadow-sm ${
           outgoing ? "rounded-tl-none bg-indigo-600 text-white" : "rounded-tr-none bg-white text-slate-800"
@@ -1801,6 +2136,9 @@ function ModelLogo({
   const provider = "agentConfig" in (seat ?? {}) ? seat?.agentConfig?.provider : trace?.provider;
   const resolvedName = seat?.name ?? trace?.playerName ?? name ?? "Agent";
   const className = `${size === "lg" ? "h-12 w-12" : "h-10 w-10"} rounded-2xl border border-slate-200 bg-white p-1 object-contain`;
+  if (resolvedName.trim().toLowerCase() === "system") {
+    return <img src="/logos/System.png" alt="System" className={className} />;
+  }
   if (kind === "human") {
     return (
       <div className={`${className} flex items-center justify-center`}>
@@ -1866,10 +2204,17 @@ function InlineError({ message }: { message: string }) {
   return <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">{message}</div>;
 }
 
-function ensureSocketReady(socket: ClientSocket, clientId: string, displayName: string, callback?: () => void) {
+function ensureSocketReady(
+  socket: ClientSocket,
+  clientId: string,
+  displayName: string,
+  authToken: string,
+  callback?: () => void
+) {
   socket.auth = {
     clientId,
-    displayName
+    displayName,
+    authToken
   };
   if (socket.connected) {
     callback?.();
@@ -1902,6 +2247,10 @@ function getOrCreateClientId(): string {
   const next = crypto.randomUUID();
   localStorage.setItem(CLIENT_ID_KEY, next);
   return next;
+}
+
+function authHeaders(authToken: string): Record<string, string> {
+  return authToken ? { Authorization: `Bearer ${authToken}` } : {};
 }
 
 function defaultBaseUrlForProvider(provider: AgentConfig["provider"]): string {
@@ -1956,6 +2305,7 @@ function getModelLogo({ model, provider, name }: { model?: string; provider?: Ag
   const key = `${model ?? ""} ${provider ?? ""} ${name ?? ""}`.toLowerCase();
   if (key.includes("glm")) return "/logos/z-ai-logo.png";
   if (key.includes("qwen")) return "/logos/qwen-logo.png";
+  if (key.includes("kimi") || key.includes("moonshot")) return "/logos/kimi_logo.png";
   if (key.includes("nemotron") || key.includes("nvidia")) return "/logos/nvidia-logo.png";
   if (key.includes("llama") || key.includes("meta")) return "/logos/meta-logo.png";
   if (key.includes("mimo") || key.includes("xiaomi")) return "/logos/xiaomi-mimo-logo.png";
@@ -2019,7 +2369,7 @@ function shouldShowTraceEvent(
     return event.kind === "reasoning" || event.kind === "provider_reply" || event.kind === "status";
   }
 
-  return playerId === activeTracePlayerId && (event.kind === "reasoning" || event.kind === "provider_reply" || event.kind === "status");
+  return playerId === activeTracePlayerId && event.kind === "reasoning";
 }
 
 function mergeTraceDelta(current: RoomView | null, payload: AgentTraceDelta): RoomView | null {

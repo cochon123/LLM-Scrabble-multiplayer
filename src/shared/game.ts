@@ -180,6 +180,21 @@ export class ScrabbleGame {
       .slice(0, limit);
   }
 
+  previewMove(playerId: string, placements: PlacementInput[]): { ok: true; summary: string; score: number; word: string } | { ok: false; error: string } {
+    const evaluation = this.evaluateMove(playerId, placements);
+    if (!evaluation.ok) {
+      return evaluation;
+    }
+
+    const mainWord = evaluation.value.formedWords[0]?.word ?? "MOVE";
+    return {
+      ok: true,
+      summary: `${mainWord} for ${evaluation.value.totalScore} points`,
+      score: evaluation.value.totalScore,
+      word: mainWord
+    };
+  }
+
   submitMove(playerId: string, placements: PlacementInput[]): { ok: true; move: TurnLog } | { ok: false; error: string } {
     const evaluation = this.evaluateMove(playerId, placements);
     if (!evaluation.ok) {

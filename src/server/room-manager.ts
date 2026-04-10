@@ -31,6 +31,7 @@ import type {
   WatchRoomPayload
 } from "../shared/types.js";
 import { appendRoomLog, getRoomLogPath } from "./logger.js";
+import type { Persistence } from "./persistence.js";
 import { runAgentTurn, warmUpAgentProvider } from "./ai.js";
 
 type ClientSocket = Socket<ClientToServerEvents, ServerToClientEvents>;
@@ -40,6 +41,8 @@ interface ClientRecord {
   clientId: string;
   displayName: string;
   socketId: string;
+  userId?: string | null;
+  isAdmin?: boolean;
   roomId?: string;
 }
 
@@ -83,20 +86,31 @@ export class RoomManager {
 
   constructor(
     private readonly io: Server<ClientToServerEvents, ServerToClientEvents>,
-    private readonly dictionary: Dictionary
+    private readonly dictionary: Dictionary,
+    private readonly persistence?: Persistence
   ) {}
 
-  attach(socket: ClientSocket): void {
+  async attach(socket: ClientSocket): Promise<void> {
     const clientId = String(socket.handshake.auth.clientId || nanoid());
-    const displayName = String(socket.handshake.auth.displayName || "Player");
+    const authToken = typeof socket.handshake.auth.authToken === "string" ? socket.handshake.auth.authToken : "";
+    const authUser = this.persistence?.enabled ? await this.persistence.getUserBySessionToken(authToken) : null;
+    if (this.persistence?.enabled && !authUser) {
+      socket.emit("error_message", "Please sign in.");
+      socket.disconnect(true);
+      return;
+    }
+    const displayName = authUser?.nickname ?? String(socket.handshake.auth.displayName || "Player");
     const existingClient = this.clients.get(clientId);
     const client: ClientRecord = {
       clientId,
       displayName,
       socketId: socket.id,
+      userId: authUser?.userId ?? existingClient?.userId ?? null,
+      isAdmin: authUser?.isAdmin ?? existingClient?.isAdmin ?? false,
       roomId: existingClient?.roomId
     };
     this.clients.set(clientId, client);
+    this.persist(client.userId ? this.persistence?.upsertUser(client.userId, displayName) : undefined);
 
     if (client.roomId) {
       const room = this.rooms.get(client.roomId);
@@ -165,6 +179,25 @@ export class RoomManager {
     return this.buildRoomView(room, clientId ?? "");
   }
 
+  async deleteRoom(roomId: string): Promise<boolean> {
+    const room = this.rooms.get(roomId);
+    if (!room) {
+      return false;
+    }
+    for (const client of this.clients.values()) {
+      if (client.roomId !== roomId) {
+        continue;
+      }
+      client.roomId = undefined;
+      if (client.socketId) {
+        this.io.to(client.socketId).emit("error_message", "This game was deleted by the admin.");
+      }
+    }
+    await this.io.in(roomId).socketsLeave(roomId);
+    this.rooms.delete(roomId);
+    return true;
+  }
+
   private handleLeaveRoom(socket: ClientSocket, clientId: string): void {
     const client = this.clients.get(clientId);
     if (!client?.roomId) {
@@ -189,8 +222,9 @@ export class RoomManager {
       return;
     }
 
-    client.displayName = payload.displayName.trim() || "Player";
+    client.displayName = client.displayName || "Player";
     client.socketId = socket.id;
+    this.persist(client.userId ? this.persistence?.upsertUser(client.userId, client.displayName) : undefined);
 
     const roomId = nanoid(8);
     const room: RoomState = {
@@ -232,6 +266,18 @@ export class RoomManager {
     };
 
     this.rooms.set(roomId, room);
+    this.persist(
+      this.persistence?.createGame({
+        gameId: roomId,
+        roomCode: roomId,
+        hostUserId: client.userId ?? clientId,
+        options: room.options,
+        seats: room.seats
+      })
+    );
+    for (const seat of room.seats) {
+      this.persist(this.persistence?.upsertGameSeat(room.id, seat, this.getUserIdForSeat(room, seat)));
+    }
     this.moveClientToRoom(socket, client, roomId);
     this.pushPublicTimeline(room, "status", "Room created.");
     this.logRoomEvent(room, "room_created", {
@@ -253,8 +299,9 @@ export class RoomManager {
     }
 
     const nextName = payload.displayName?.trim();
-    if (nextName) {
+    if (nextName && !this.persistence?.enabled) {
       client.displayName = nextName;
+      this.persist(client.userId ? this.persistence?.upsertUser(client.userId, client.displayName) : undefined);
     }
     client.socketId = socket.id;
     this.moveClientToRoom(socket, client, room.id);
@@ -275,8 +322,9 @@ export class RoomManager {
       return;
     }
 
-    client.displayName = payload.displayName.trim() || client.displayName;
+    client.displayName = this.persistence?.enabled ? client.displayName : payload.displayName.trim() || client.displayName;
     client.socketId = socket.id;
+    this.persist(client.userId ? this.persistence?.upsertUser(client.userId, client.displayName) : undefined);
     this.moveClientToRoom(socket, client, room.id);
 
     const existingSeat = room.seats.find((seat) => seat.ownerClientId === clientId);
@@ -297,6 +345,10 @@ export class RoomManager {
     }
 
     room.spectatorClientIds.delete(clientId);
+    {
+      const assignedSeat = existingSeat ?? room.seats.find((seat) => seat.ownerClientId === clientId)!;
+      this.persist(this.persistence?.upsertGameSeat(room.id, assignedSeat, this.getUserIdForSeat(room, assignedSeat)));
+    }
     room.chat.push(systemChat(`${client.displayName} a rejoint la partie comme joueur.`));
     this.pushPublicTimeline(room, "status", `${client.displayName} rejoint la partie comme joueur.`);
     this.logRoomEvent(room, "player_joined", {
@@ -323,6 +375,7 @@ export class RoomManager {
     }
 
     room.options = { ...room.options, ...payload.patch };
+    this.persist(this.persistence?.updateGame({ gameId: room.id, options: room.options }));
     this.touchRoom(room);
     this.logRoomEvent(room, "room_options_updated", {
       updatedBy: clientId,
@@ -399,6 +452,7 @@ export class RoomManager {
     }
 
     this.touchRoom(room);
+    this.persist(this.persistence?.upsertGameSeat(room.id, seat, this.getUserIdForSeat(room, seat)));
     this.logRoomEvent(room, "seat_updated", {
       updatedBy: clientId,
       seatId: seat.id,
@@ -437,6 +491,19 @@ export class RoomManager {
     room.agentAbortController = null;
     room.agentStates = {};
     room.publicTimeline = [];
+    this.persist(
+      this.persistence?.updateGame({
+        gameId: room.id,
+        status: "live",
+        options: room.options,
+        startedAt: new Date(),
+        finishedAt: null,
+        result: null
+      })
+    );
+    for (const seat of activeSeats) {
+      this.persist(this.persistence?.upsertGameSeat(room.id, seat, this.getUserIdForSeat(room, seat)));
+    }
     this.pushPublicTimeline(room, "status", "The game is starting.");
     this.logRoomEvent(room, "game_started", {
       seats: summarizeSeats(activeSeats),
@@ -626,6 +693,12 @@ export class RoomManager {
     room.paused = !room.paused;
     room.pauseRequestedByClientId = clientId;
     this.pushPublicTimeline(room, "status", room.paused ? "Game paused." : "Game resumed.");
+    this.persist(
+      this.persistence?.updateGame({
+        gameId: room.id,
+        status: room.paused ? "paused" : "live"
+      })
+    );
     this.touchRoom(room);
     this.logRoomEvent(room, room.paused ? "game_paused" : "game_resumed", {
       requestedBy: clientId
@@ -674,6 +747,7 @@ export class RoomManager {
         logDiagnostic: (type, payload) => this.logRoomEvent(room, `agent_provider_${type}`, payload),
         getPublicTimeline: () => room.publicTimeline,
         pushChat: (playerId, text) => this.pushAgentChat(room, playerId, text),
+        pushSystemChat: (text) => this.pushSystemChat(room, text),
         beginTrace: (trace) => this.beginTrace(room, trace),
         pushTraceEvent: (playerId, event) => this.pushTraceEvent(room, playerId, event),
         startTraceEvent: (playerId, event) => this.startTraceEvent(room, playerId, event),
@@ -862,6 +936,18 @@ export class RoomManager {
     return message;
   }
 
+  private pushSystemChat(room: RoomState, text: string): ChatMessage {
+    const message = systemChat(text);
+    room.chat.push(message);
+    this.pushPublicTimeline(room, "status", text);
+    this.touchRoom(room);
+    this.logRoomEvent(room, "system_chat", {
+      text
+    });
+    this.syncRoom(room.id);
+    return message;
+  }
+
   private rejectIfPaused(room: RoomState, clientId: string): boolean {
     if (!room.paused) {
       return false;
@@ -893,8 +979,16 @@ export class RoomManager {
         if (displayName) {
           seat.name = displayName;
         }
+        this.persist(this.persistence?.upsertGameSeat(room.id, seat, this.getUserIdForSeat(room, seat)));
       }
     });
+  }
+
+  private getUserIdForSeat(room: RoomState, seat: PlayerSeat): string | null {
+    if (seat.kind !== "human" || !seat.ownerClientId) {
+      return null;
+    }
+    return this.clients.get(seat.ownerClientId)?.userId ?? null;
   }
 
   private pushPublicTimeline(room: RoomState, kind: PublicTimelineEntry["kind"], text: string): void {
@@ -909,13 +1003,15 @@ export class RoomManager {
 
   private logRoomEvent(room: RoomState, type: string, payload: Record<string, unknown>): void {
     const snapshot = room.game?.getSnapshot();
-    appendRoomLog(room.id, type, {
+    const eventPayload = {
       turn: snapshot?.turn ?? null,
       currentPlayerId: snapshot?.currentPlayerId ?? null,
       finished: snapshot?.finished ?? false,
       paused: room.paused,
       ...payload
-    });
+    };
+    appendRoomLog(room.id, type, eventPayload);
+    this.persist(this.persistence?.appendGameEvent(room.id, type, eventPayload));
   }
 
   private logGameFinishedIfNeeded(room: RoomState): void {
@@ -925,13 +1021,24 @@ export class RoomManager {
 
     room.finishedLogged = true;
     const snapshot = room.game.getSnapshot();
-    this.logRoomEvent(room, "game_finished", {
+    const result = {
       winners: snapshot.winnerIds,
       scores: snapshot.players.map((player) => ({
         id: player.id,
         name: player.name,
         score: player.score
       }))
+    };
+    this.persist(
+      this.persistence?.updateGame({
+        gameId: room.id,
+        status: "finished",
+        finishedAt: new Date(),
+        result
+      })
+    );
+    this.logRoomEvent(room, "game_finished", {
+      ...result
     });
   }
 
@@ -1074,6 +1181,12 @@ export class RoomManager {
 
   private touchRoom(room: RoomState): void {
     room.updatedAt = Date.now();
+  }
+
+  private persist(operation: Promise<void> | undefined): void {
+    operation?.catch((error) => {
+      console.error("[persistence]", error);
+    });
   }
 }
 

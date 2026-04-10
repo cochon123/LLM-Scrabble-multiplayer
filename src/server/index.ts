@@ -1,10 +1,12 @@
+import "dotenv/config";
 import express from "express";
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { Server } from "socket.io";
 import { Dictionary } from "../shared/dictionary.js";
-import type { ClientToServerEvents, RoomDirectoryResponse, ServerToClientEvents } from "../shared/types.js";
+import type { AuthUserView, ClientToServerEvents, RoomDirectoryResponse, ServerToClientEvents } from "../shared/types.js";
+import { createPersistence } from "./persistence.js";
 import { RoomManager } from "./room-manager.js";
 
 async function bootstrap() {
@@ -29,16 +31,97 @@ async function bootstrap() {
 
   const dictionaryPath = resolve(process.cwd(), process.env.DICTIONARY_PATH || "public/dictionary/en-large.txt");
   const dictionary = new Dictionary(await readFile(dictionaryPath, "utf8"));
-  const roomManager = new RoomManager(io, dictionary);
+  const persistence = await createPersistence(process.env.DATABASE_URL);
+  const roomManager = new RoomManager(io, dictionary, persistence);
 
-  app.get("/api/rooms", (_request, response) => {
+  async function getAuthenticatedUser(request: express.Request): Promise<AuthUserView | null> {
+    const authHeader = request.header("authorization");
+    const token = authHeader?.startsWith("Bearer ") ? authHeader.slice("Bearer ".length).trim() : "";
+    if (!token) {
+      return null;
+    }
+    return persistence.getUserBySessionToken(token);
+  }
+
+  app.post("/api/auth/register", express.json(), async (request, response) => {
+    if (!persistence.enabled) {
+      response.status(503).json({ error: "Authentication requires DATABASE_URL." });
+      return;
+    }
+    try {
+      const nickname = String(request.body?.nickname ?? "");
+      const password = String(request.body?.password ?? "");
+      const user = await persistence.registerUser(nickname, password);
+      const token = await persistence.createSession(user.userId);
+      response.json({ token, user });
+    } catch (error) {
+      response.status(400).json({ error: error instanceof Error ? error.message : "Registration failed." });
+    }
+  });
+
+  app.post("/api/auth/login", express.json(), async (request, response) => {
+    if (!persistence.enabled) {
+      response.status(503).json({ error: "Authentication requires DATABASE_URL." });
+      return;
+    }
+    try {
+      const nickname = String(request.body?.nickname ?? "");
+      const password = String(request.body?.password ?? "");
+      const user = await persistence.loginUser(nickname, password);
+      const token = await persistence.createSession(user.userId);
+      response.json({ token, user });
+    } catch (error) {
+      response.status(400).json({ error: error instanceof Error ? error.message : "Login failed." });
+    }
+  });
+
+  app.get("/api/auth/me", async (request, response) => {
+    const user = await getAuthenticatedUser(request);
+    if (!user) {
+      response.status(401).json({ error: "Authentication required." });
+      return;
+    }
+    response.json({ user });
+  });
+
+  app.post("/api/auth/default-api-key", express.json(), async (request, response) => {
+    const user = await getAuthenticatedUser(request);
+    if (!user) {
+      response.status(401).json({ error: "Authentication required." });
+      return;
+    }
+    try {
+      const provider = String(request.body?.provider ?? "") as keyof AuthUserView["defaultApiKeys"];
+      const apiKey = String(request.body?.apiKey ?? "").trim();
+      if (!apiKey) {
+        response.status(400).json({ error: "API key is required." });
+        return;
+      }
+      const nextUser = await persistence.saveDefaultApiKey(user.userId, provider, apiKey);
+      response.json({ user: nextUser });
+    } catch (error) {
+      response.status(400).json({ error: error instanceof Error ? error.message : "Could not save default API key." });
+    }
+  });
+
+  app.get("/api/rooms", async (request, response) => {
+    const user = await getAuthenticatedUser(request);
+    if (!user) {
+      response.status(401).json({ error: "Authentication required." });
+      return;
+    }
     const payload: RoomDirectoryResponse = {
       rooms: roomManager.listRoomSummaries()
     };
     response.json(payload);
   });
 
-  app.get("/api/rooms/:roomId", (request, response) => {
+  app.get("/api/rooms/:roomId", async (request, response) => {
+    const user = await getAuthenticatedUser(request);
+    if (!user) {
+      response.status(401).json({ error: "Authentication required." });
+      return;
+    }
     const clientId = typeof request.query.clientId === "string" ? request.query.clientId : null;
     const view = roomManager.getRoomViewSnapshot(request.params.roomId, clientId);
     if (!view) {
@@ -46,6 +129,39 @@ async function bootstrap() {
       return;
     }
     response.json(view);
+  });
+
+  app.get("/api/games/:gameId/replay", async (request, response) => {
+    const user = await getAuthenticatedUser(request);
+    if (!user) {
+      response.status(401).json({ error: "Authentication required." });
+      return;
+    }
+    if (!persistence.enabled) {
+      response.status(503).json({ error: "Postgres persistence is not configured." });
+      return;
+    }
+    const replay = await persistence.getReplay(request.params.gameId);
+    if (!replay) {
+      response.status(404).json({ error: "Game not found." });
+      return;
+    }
+    response.json(replay);
+  });
+
+  app.delete("/api/games/:gameId", async (request, response) => {
+    const user = await getAuthenticatedUser(request);
+    if (!user?.isAdmin) {
+      response.status(403).json({ error: "Admin access required." });
+      return;
+    }
+    const deleted = await roomManager.deleteRoom(request.params.gameId);
+    const deletedFromDb = await persistence.deleteGame(request.params.gameId);
+    if (!deleted && !deletedFromDb) {
+      response.status(404).json({ error: "Game not found." });
+      return;
+    }
+    response.json({ ok: true });
   });
 
   io.on("connection", (socket) => {
@@ -61,7 +177,8 @@ async function bootstrap() {
     app.get("/health", (_request, response) => {
       response.json({
         ok: true,
-        dictionaryWords: dictionary.count()
+        dictionaryWords: dictionary.count(),
+        persistence: persistence.enabled
       });
     });
   }

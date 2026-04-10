@@ -1,149 +1,74 @@
-# Scrabble Codex
+# LLM Scrabble Multiplayer
 
-Scrabble Codex est une webapp Scrabble multijoueur temps réel, pensée pour être hébergée, avec support des parties humain vs humain, humain vs agent, agent vs agent, et chat intégré. Le serveur reste autoritaire sur toutes les règles de jeu et les agents n’écrivent jamais directement dans l’état du plateau.
+Real-time Scrabble where humans and language models can play in the same room.
 
-Le projet a été conçu autour d’une contrainte centrale: permettre à des LLM de jouer sans casser la partie. La réponse retenue n’est pas de laisser un modèle “réécrire” librement une matrice du plateau, mais de lui fournir un contexte structuré et un ensemble d’outils serveur validés. Le modèle propose une action, le serveur la valide, puis l’applique ou la refuse avec un diagnostic détaillé.
+This project is built around a simple idea: LLMs should be able to **play with people**, **play against people**, and **play against each other** in a real multiplayer game, without ever being allowed to corrupt the board state. The server stays authoritative, every move is validated, and agent behavior is observable through chat and trace views.
 
-## Fonctionnalités
+It is, to our knowledge, the first project focused on **multiplayer LLM vs Human and LLM vs LLM Scrabble gameplay** in one shared live experience.
 
-- salons de partie configurables avec 2 à 4 sièges
-- sièges humains ou agents IA par siège
-- fournisseurs IA supportés:
-  - `openai_compatible`
-  - `openrouter`
-  - `google`
-  - `ollama`
-- chat temps réel entre humains et agents
-- placements de mots, échanges de tuiles, passe, score, fin de partie
-- option de partie pour activer l’affichage des coups légaux côté humains
-- option par agent pour autoriser ou non l’outil `list_legal_moves`
-- drag-and-drop des lettres sur le plateau pour les humains
-- trace agent détaillée dans l’UI:
-  - prompt
-  - contextes envoyés
-  - reasoning si exposé par le fournisseur
-  - réponses modèle
-  - tool calls
-  - résultats d’outils
-- logs persistants JSONL par salon pour rejouer le déroulement d’une partie
+We are also planning to release a **leaderboard**.
 
-## Stack
+## Screenshots
 
-- frontend: React 19 + Vite
-- backend: Node.js + Express + Socket.IO
-- moteur de jeu: TypeScript partagé côté serveur/client
-- styles: Tailwind via CDN dans `index.html`
-- tests: Vitest
+### Home / Lobby
 
-## Démarrage
+![Home and lobby](docs/screenshots/home-lobby.png)
 
-Installation:
+### Game Room
 
-```bash
-npm install
-```
+![Game room](docs/screenshots/game-room.png)
 
-Développement:
+## What It Does
 
-```bash
-npm run dev
-```
+- live multiplayer Scrabble rooms with shareable URLs
+- human vs human, human vs LLM, and LLM vs LLM games
+- spectator mode
+- per-seat model/provider configuration
+- real-time chat between humans and agents
+- agent reasoning and trace views with multiple visibility modes
+- persistent game storage with PostgreSQL
+- replay endpoint for completed games
+- admin controls to delete games
+- benchmark tooling to evaluate different LLM move-output formats
 
-URLs par défaut:
+## Why It Exists
 
-- frontend: `http://localhost:5173`
-- backend: `http://localhost:3001`
+FOR FUN, I just wanted a easy way to see if AI can play scrable, and i wanted an easy way to that.
 
-Production:
+## How The Agent System Works
 
-```bash
-npm run build
-npm start
-```
+Agents do not directly rewrite the game board.
 
-## Variables et configuration
-
-### Serveur
-
-- `PORT`: port HTTP du serveur, par défaut `3001`
-- `DICTIONARY_PATH`: path to the dictionary to load, default `public/dictionary/en-large.txt`
-
-### Fournisseurs IA
-
-Les clés peuvent être passées soit dans l’UI du siège agent, soit via variables d’environnement.
-
-- OpenAI-compatible:
-  - `OPENAI_API_KEY`
-  - `OPENAI_COMPAT_BASE_URL`
-- OpenRouter:
-  - `OPENROUTER_API_KEY`
-- Google AI:
-  - `GOOGLE_API_KEY`
-- Ollama:
-  - pas de clé par défaut, endpoint local `http://127.0.0.1:11434/api/chat`
-
-### Presets d’URL dans l’UI
-
-Quand on change de fournisseur dans le lobby, l’UI préremplit maintenant l’URL adaptée:
-
-- `openai_compatible` -> `http://127.0.0.1:1234/v1/chat/completions`
-- `openrouter` -> `https://openrouter.ai/api/v1/chat/completions`
-- `google` -> vide, le backend construit l’URL native Google
-- `ollama` -> `http://127.0.0.1:11434/api/chat`
-
-## Dictionnaire
-
-The server now loads `public/dictionary/en-large.txt` by default. Word loading normalizes entries as:
-
-- suppression des diacritiques
-- suppression des caractères non alphabétiques
-- passage en majuscules
-
-Le moteur travaille donc sur des formes normalisées.
-
-## Philosophie agentique
-
-Le point critique du projet est le suivant: un LLM ne doit pas avoir l’autorité sur l’état du jeu.
-
-Le système n’utilise donc pas une matrice “à renvoyer modifiée” comme source de vérité. Le modèle reçoit un contexte, mais agit uniquement via des outils:
+They receive structured context and can only act through server tools such as:
 
 - `get_state {}`
-- `list_legal_moves {"limit": number}`
+- `list_legal_moves {"limit": number}` when allowed
 - `play_move {"placements":[{"row":number,"col":number,"letter":"A"}]}`
 - `exchange_tiles {"letters":["A","E"]}`
 - `send_chat {"message":"..."}`
 - `pass_turn {}`
 
-Le serveur:
+The server:
 
-1. reçoit un appel d’outil
-2. valide les arguments
-3. vérifie les règles métier
-4. applique ou refuse l’action
-5. renvoie un diagnostic détaillé
+1. validates the tool payload
+2. checks the move against the real Scrabble rules
+3. applies it only if it is legal
+4. returns structured failure details otherwise
 
-Conséquences:
+This means models can fail often, but the game still stays correct.
 
-- un agent peut se tromper sans corrompre la partie
-- les erreurs sont observables et exploitables pour itérer
-- on peut autoriser ou non `list_legal_moves` selon le niveau d’assistance voulu
+## Tech Stack
 
-## Convention de coordonnées
+- React 19
+- Vite
+- Node.js
+- Express
+- Socket.IO
+- TypeScript
+- PostgreSQL
+- Vitest
 
-Les outils agent utilisent des coordonnées `0-indexées`.
-
-Exemples:
-
-- coin haut gauche: `row 0, col 0`
-- centre du plateau 15x15: `row 7, col 7`
-
-Les messages d’erreur détaillés rappellent cette convention et affichent aussi la coordonnée “humaine” équivalente pour éviter toute ambiguïté.
-
-## Architecture
-
-### Vue d’ensemble
-
-Le projet est organisé en trois zones:
+## Project Structure
 
 ```text
 src/
@@ -154,266 +79,182 @@ src/
     ai.ts
     index.ts
     logger.ts
+    persistence.ts
     room-manager.ts
   shared/
     agent-prompt.ts
     constants.ts
     dictionary.ts
     game.ts
-    game.test.ts
     types.ts
 public/
   dictionary/
+    en-large.txt
     fr-basic.txt
     fr-large.txt
+  logos/
 ```
 
-### `src/client`
+## Requirements
 
-#### [`App.tsx`](/home/cochon/Documents/miniproject/scrabble_codex/src/client/App.tsx)
+- Node.js 20+
+- npm
+- PostgreSQL if you want auth, persistent games, and replay storage
 
-Contient l’essentiel de l’application frontend:
+## Local Setup
 
-- connexion Socket.IO
-- création et join de salon
-- édition des sièges du lobby
-- rendu du plateau, chevalet, chat, scores, journal
-- affichage optionnel des coups légaux
-- rendu des traces agents
-- interactions humaines:
-  - clic
-  - drag-and-drop
-  - échange de tuiles
-  - chat
-
-Le client reste volontairement léger: il prépare l’intention utilisateur, mais toutes les règles sont validées côté serveur.
-
-#### [`main.tsx`](/home/cochon/Documents/miniproject/scrabble_codex/src/client/main.tsx)
-
-Bootstrap React minimal.
-
-### `src/server`
-
-#### [`index.ts`](/home/cochon/Documents/miniproject/scrabble_codex/src/server/index.ts)
-
-Point d’entrée serveur:
-
-- création du serveur HTTP
-- montage de Socket.IO
-- chargement du dictionnaire
-- construction du `RoomManager`
-- service des assets frontend en production
-
-#### [`room-manager.ts`](/home/cochon/Documents/miniproject/scrabble_codex/src/server/room-manager.ts)
-
-Orchestrateur principal des salons et des parties:
-
-- attache les sockets
-- crée les salons
-- gère les joins/reconnects
-- met à jour les sièges et options
-- démarre les parties
-- relaie les actions humaines au moteur
-- déclenche les tours agents
-- construit la `RoomView` envoyée au frontend
-
-Le `RoomManager` est aussi l’endroit où sont:
-
-- stockés les traces agents
-- stockées les conversations cumulées par agent
-- écrits les logs persistants JSONL
-
-#### [`ai.ts`](/home/cochon/Documents/miniproject/scrabble_codex/src/server/ai.ts)
-
-Couche d’orchestration agent:
-
-- construit le prompt système effectif
-- accumule la conversation du modèle au fil des tours
-- construit le transcript de contexte
-- appelle le fournisseur choisi
-- parse le JSON renvoyé par le modèle
-- exécute les outils autorisés
-- enregistre la trace détaillée
-- déclenche un moteur de secours si aucune action valide n’est obtenue
-
-Le moteur de secours n’est pas exposé comme fournisseur dans l’UI. Il sert uniquement de filet de sécurité serveur.
-
-#### [`logger.ts`](/home/cochon/Documents/miniproject/scrabble_codex/src/server/logger.ts)
-
-Journalisation durable par salon dans `runtime-logs/rooms/<roomId>.jsonl`.
-
-Chaque ligne contient:
-
-- timestamp
-- roomId
-- type d’événement
-- payload sérialisé
-
-Usage principal:
-
-- débugguer les agents
-- rejouer le déroulé d’une partie
-- comprendre pourquoi un `tool_call` a échoué
-
-### `src/shared`
-
-#### [`types.ts`](/home/cochon/Documents/miniproject/scrabble_codex/src/shared/types.ts)
-
-Contrats partagés:
-
-- types du jeu
-- payloads socket
-- configuration agent
-- traces agents
-- snapshots de partie
-
-#### [`constants.ts`](/home/cochon/Documents/miniproject/scrabble_codex/src/shared/constants.ts)
-
-Constantes de plateau et de distribution des lettres.
-
-#### [`dictionary.ts`](/home/cochon/Documents/miniproject/scrabble_codex/src/shared/dictionary.ts)
-
-Chargement et normalisation du dictionnaire.
-
-#### [`game.ts`](/home/cochon/Documents/miniproject/scrabble_codex/src/shared/game.ts)
-
-Moteur Scrabble autoritaire. C’est la pièce la plus importante côté métier.
-
-Responsabilités:
-
-- état du plateau
-- état des joueurs
-- sac de lettres
-- validation des coups
-- calcul du score
-- génération de coups légaux
-- échanges et passes
-- détection de fin de partie
-
-Le moteur renvoie des diagnostics explicites quand un coup échoue, par exemple:
-
-- coup flottant
-- mot principal avec trou
-- case déjà occupée
-- mot invalide avec coordonnées
-- coup hors centre au premier tour
-- tuile absente du chevalet
-
-#### [`agent-prompt.ts`](/home/cochon/Documents/miniproject/scrabble_codex/src/shared/agent-prompt.ts)
-
-Prompt système par défaut pour les agents. Il insiste notamment sur:
-
-- réponse en JSON unique
-- outillage disponible
-- nécessité de finir le tour par une action terminale
-- jeu en français
-- coordonnées `0-indexées`
-- possibilité d’utiliser le chat si pertinent
-
-#### [`game.test.ts`](/home/cochon/Documents/miniproject/scrabble_codex/src/shared/game.test.ts)
-
-Couverture minimale du moteur:
-
-- validation du premier coup
-- calcul de score
-- génération de coups légaux
-- diagnostics d’erreurs structurés
-
-## Cycle d’un tour agent
-
-1. `RoomManager` détecte que le joueur courant est un agent.
-2. `ai.ts` ouvre ou reprend la conversation cumulée de cet agent.
-3. Le backend construit un contexte:
-   - chevalet de l’agent
-   - scores
-   - plateau
-   - dernier coup
-   - chat récent
-   - historique d’outils
-4. Le fournisseur renvoie un objet JSON `{tool, arguments}`.
-5. Le serveur exécute l’outil.
-6. Le résultat est renvoyé au modèle et ajouté à la trace.
-7. Si aucune action valide n’aboutit après plusieurs étapes, le moteur de secours joue à la place.
-
-## Traces et logs
-
-Deux niveaux d’observabilité existent:
-
-### Trace UI
-
-Visible pendant la partie dans le panneau `Trace agents`:
-
-- prompt
-- contextes successifs
-- reasoning
-- réponses modèle
-- tool calls
-- résultats
-
-### Log disque
-
-Écrit dans `runtime-logs/rooms/`.
-
-Exemples d’événements:
-
-- `room_created`
-- `seat_updated`
-- `game_started`
-- `human_move_rejected`
-- `human_move_applied`
-- `agent_turn_started`
-- `agent_trace_started`
-- `agent_trace_event`
-- `agent_turn_completed`
-- `agent_move_applied`
-- `game_finished`
-
-Ce log est la meilleure source pour analyser un agent après coup.
-
-## UI et styling
-
-Le projet utilise Tailwind via CDN dans [index.html](/home/cochon/Documents/miniproject/scrabble_codex/index.html), sans fichier CSS séparé. C’est pratique pour itérer vite, mais pour une mise en production plus stricte, une compilation Tailwind via Vite serait plus propre.
-
-## État actuel et limites
-
-Le projet est fonctionnel, mais il faut garder en tête:
-
-- pas d’authentification
-- pas de persistance base de données
-- pas de reprise de partie après redémarrage serveur
-- dictionnaire large mais pas présenté comme lexique officiel de compétition
-- le moteur de secours peut masquer certaines limites de raisonnement des modèles
-- la trace UI est pensée pour le débogage, pas pour un public final
-
-## Déploiement
-
-Le mode production sert:
-
-- les assets frontend depuis `dist/`
-- le backend Node depuis `dist-server/server/index.js`
-
-Séquence standard:
+### 1. Install dependencies
 
 ```bash
-npm run build
-npm start
+npm install
 ```
 
-## Commandes utiles
+### 2. Configure environment
+
+Create a `.env` file:
+
+```bash
+DATABASE_URL=postgres://scrabble_codex:scrabble_codex@localhost:5432/scrabble_codex
+PORT=3001
+DICTIONARY_PATH=public/dictionary/en-large.txt
+```
+
+### 3. Create the PostgreSQL database
+
+Example:
+
+```sql
+CREATE ROLE scrabble_codex LOGIN PASSWORD 'scrabble_codex';
+CREATE DATABASE scrabble_codex OWNER scrabble_codex;
+```
+
+### 4. Start the app
 
 ```bash
 npm run dev
+```
+
+Default URLs:
+
+- frontend: `http://localhost:5173`
+- backend: `http://localhost:3001`
+
+### Production build
+
+```bash
 npm run build
 npm start
+```
+
+## Authentication
+
+The app uses a deliberately simple auth system:
+
+- nickname
+- password
+- session token
+
+There is also a built-in admin account:
+
+- nickname: `admin`
+- password: `admin123`
+
+Admin can delete games, including games that are still running.
+
+## Persistence
+
+When `DATABASE_URL` is configured, the server stores:
+
+- users
+- sessions
+- games
+- player seats
+- append-only game events
+
+Replay data is available through:
+
+- `GET /api/games/:gameId/replay`
+
+If `DATABASE_URL` is not configured, the app can still run in memory, but auth and persistence-dependent features are disabled.
+
+## Providers
+
+Supported providers in the UI:
+
+- `openai_compatible`
+- `openrouter`
+- `google`
+- `ollama`
+
+API keys can be entered in the UI. When a user enters or changes a key, the app can store it as that user’s default key for the provider.
+
+Current UI presets:
+
+- `openai_compatible` -> `http://127.0.0.1:1234/v1/chat/completions`
+- `openrouter` -> `https://openrouter.ai/api/v1/chat/completions`
+- `google` -> native Google API flow
+- `ollama` -> `http://127.0.0.1:11434/api/chat`
+
+## Dictionary
+
+The default runtime dictionary is:
+
+- `public/dictionary/en-large.txt`
+
+It is a stricter curated English list derived from the system `american-english` dictionary, with a conservative allowlist of short two-letter words. This avoids junk entries such as:
+
+- `ZS`
+- `LG`
+- `IE`
+
+All words are normalized before use:
+
+- diacritics removed
+- non-letters stripped
+- uppercased
+
+## Benchmarks
+
+This repo also includes a terminal benchmark suite for testing different LLM move-output interfaces on guided Scrabble placement tasks.
+
+Location:
+
+- [benchmarks/scrabble_toolcall](/home/cochon/Documents/miniproject/scrabble_codex/benchmarks/scrabble_toolcall)
+
+It supports:
+
+- dataset generation
+- provider/model evaluation
+- error taxonomy
+- charts and summaries
+
+There is also an `autoresearch` harness for automated prompt/tool-interface exploration.
+
+## Tests
+
+Run:
+
+```bash
 npm test
 ```
 
-## Résumé de conception
+Build:
 
-L’idée clé du projet est simple:
+```bash
+npm run build
+```
 
-- les humains jouent via une UI web
-- les agents jouent via des outils
-- le serveur garde toute l’autorité métier
+## Current Status
 
-Ce choix rend possible un Scrabble réellement multijoueur avec LLM sans laisser les modèles casser l’état du jeu.
+The project already supports full live gameplay, agent reasoning visibility, persistence, replay logging, benchmark tooling, and admin moderation.
+
+Next planned work includes:
+
+- leaderboard release
+- stronger production deployment setup
+- better curated English Scrabble lexicons
+- more agent-vs-agent evaluation and matchmaking features
+
+## License
+
+No license file has been added yet.

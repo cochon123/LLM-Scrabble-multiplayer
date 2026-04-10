@@ -30,6 +30,7 @@ interface AgentRoomContext {
   logDiagnostic: (type: string, payload: Record<string, unknown>) => void;
   getPublicTimeline: () => PublicTimelineEntry[];
   pushChat: (playerId: string, text: string) => ChatMessage;
+  pushSystemChat: (text: string) => ChatMessage;
   beginTrace: (trace: AgentTrace) => void;
   pushTraceEvent: (playerId: string, event: AgentTraceEvent) => void;
   startTraceEvent: (playerId: string, event: AgentTraceEvent) => void;
@@ -1035,12 +1036,20 @@ function executeTool(
       const placements = Array.isArray(args.placements) ? (args.placements as AgentPlacement[]) : [];
       const mapped = mapAgentPlacements(context.game, playerId, placements);
       if (!mapped.ok) {
+        context.pushSystemChat("Invalid placement.");
         return {
           done: false,
           summary: describePlayMoveFailure(context.game, playerId, placements, mapped.error)
         };
       }
+      const preview = context.game.previewMove(playerId, mapped.placements);
+      if (preview.ok) {
+        context.pushChat(playerId, `Try "${preview.word}" for ${preview.score} points.`);
+      }
       const result = context.game.submitMove(playerId, mapped.placements);
+      if (!result.ok) {
+        context.pushSystemChat("Invalid placement.");
+      }
       return {
         done: result.ok,
         summary: result.ok ? result.move.summary : describePlayMoveFailure(context.game, playerId, placements, result.error)
