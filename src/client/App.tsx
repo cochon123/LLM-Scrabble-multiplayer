@@ -652,6 +652,12 @@ export function App() {
     });
   }
 
+  function onRemoveTile(placement: PlacementInput) {
+    setTentativePlacements((current) =>
+      current.filter((p) => !(p.row === placement.row && p.col === placement.col))
+    );
+  }
+
   function passTurn() {
     if (!view) {
       return;
@@ -812,6 +818,7 @@ export function App() {
           setExchangeSelection={setExchangeSelection}
           onBoardClick={onBoardClick}
           onDropTile={placeTileOnCell}
+          onRemoveTile={onRemoveTile}
           submitMove={submitMove}
           clearDraftMove={clearDraftMove}
           passTurn={passTurn}
@@ -1025,6 +1032,7 @@ function RoomPage(props: {
   setExchangeSelection: React.Dispatch<React.SetStateAction<string[]>>;
   onBoardClick: (cell: BoardCell) => void;
   onDropTile: (tileId: string, cell: BoardCell) => void;
+  onRemoveTile: (placement: PlacementInput) => void;
   submitMove: () => void;
   clearDraftMove: () => void;
   passTurn: () => void;
@@ -1071,6 +1079,7 @@ function RoomPage(props: {
     setExchangeSelection,
     onBoardClick,
     onDropTile,
+    onRemoveTile,
     submitMove,
     clearDraftMove,
     passTurn,
@@ -1124,30 +1133,27 @@ function RoomPage(props: {
       }`}
     >
       <header className="mb-3 rounded-[28px] bg-white dark:bg-slate-900 px-5 py-4 shadow-xl shadow-slate-200/80 dark:shadow-slate-900/50">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex flex-wrap items-center gap-3">
             <p className="text-sm font-semibold uppercase tracking-[0.3em] text-indigo-500">Room {view.roomId}</p>
-            <h1 className="mt-1 text-4xl font-black tracking-[0.08em] text-slate-900 dark:text-white md:text-5xl">SCRABBLE CODEX</h1>
-            <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+            <span className="text-slate-300 dark:text-slate-600">·</span>
+            <h1 className="text-2xl md:text-3xl font-black tracking-[0.08em] text-slate-900 dark:text-white">SCRABBLE</h1>
+            <span className="text-slate-300 dark:text-slate-600">·</span>
+            <p className="text-sm text-slate-500 dark:text-slate-400">
               {view.status === "lobby" ? "Public lobby" : boardTitle}
               {view.paused ? " · Paused" : ""}
             </p>
           </div>
-          <div className="grid gap-3 md:min-w-[280px]">
-            <div className="rounded-[24px] bg-slate-50 dark:bg-slate-950 px-4 py-3">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400 dark:text-slate-500">Account</p>
-              <p className="mt-1 text-lg font-bold text-slate-900 dark:text-white">{displayName}</p>
-            </div>
-            <div className="flex flex-wrap items-center justify-end gap-2">
-              <span className="rounded-full bg-slate-100 dark:bg-slate-800 px-4 py-2 text-sm font-semibold text-slate-600 dark:text-slate-300">
-                {view.viewerRole === "player" ? "Player" : "Spectator"}
-              </span>
-              {view.status === "lobby" && view.viewerRole === "spectator" && activeHumanSeatAvailable ? (
-                <button className="rounded-2xl bg-indigo-600 px-4 py-3 font-semibold text-white" onClick={onJoinAsPlayer}>
-                  Join as player
-                </button>
-              ) : null}
-            </div>
+          <div className="flex items-center gap-3">
+            <p className="text-lg font-bold text-slate-900 dark:text-white">{displayName}</p>
+            <span className="rounded-full bg-slate-100 dark:bg-slate-800 px-4 py-2 text-sm font-semibold text-slate-600 dark:text-slate-300">
+              {view.viewerRole === "player" ? "Player" : "Spectator"}
+            </span>
+            {view.status === "lobby" && view.viewerRole === "spectator" && activeHumanSeatAvailable ? (
+              <button className="rounded-2xl bg-indigo-600 px-4 py-3 font-semibold text-white" onClick={onJoinAsPlayer}>
+                Join as player
+              </button>
+            ) : null}
           </div>
         </div>
       </header>
@@ -1200,6 +1206,7 @@ function RoomPage(props: {
               setExchangeSelection={setExchangeSelection}
               onBoardClick={onBoardClick}
               onDropTile={onDropTile}
+              onRemoveTile={onRemoveTile}
               submitMove={submitMove}
               clearDraftMove={clearDraftMove}
               passTurn={passTurn}
@@ -1312,6 +1319,7 @@ function GameView({
   setExchangeSelection,
   onBoardClick,
   onDropTile,
+  onRemoveTile,
   submitMove,
   clearDraftMove,
   passTurn,
@@ -1336,6 +1344,7 @@ function GameView({
   setExchangeSelection: React.Dispatch<React.SetStateAction<string[]>>;
   onBoardClick: (cell: BoardCell) => void;
   onDropTile: (tileId: string, cell: BoardCell) => void;
+  onRemoveTile: (placement: PlacementInput) => void;
   submitMove: () => void;
   clearDraftMove: () => void;
   passTurn: () => void;
@@ -1348,38 +1357,38 @@ function GameView({
 }) {
   return (
     <div className="grid gap-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="text-sm font-semibold uppercase tracking-[0.28em] text-indigo-500">Game</p>
-          <h2 className="text-3xl font-bold text-slate-900 dark:text-white">Turn {view.game.turn}</h2>
-          <p className="mt-2 text-slate-600 dark:text-slate-300">
-            {view.game.players.find((player) => player.id === view.game.currentPlayerId)?.name ?? "Waiting"}
-            {view.paused ? " · Paused" : ""}
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <button
-            className="rounded-2xl bg-indigo-600 px-4 py-3 font-semibold text-white disabled:cursor-not-allowed disabled:bg-indigo-300"
-            onClick={submitMove}
-            disabled={!myTurn || tentativePlacements.length === 0}
-          >
-            Play
-          </button>
-          <button
-            className="rounded-2xl bg-slate-200 dark:bg-slate-700 px-4 py-3 font-semibold text-slate-800 dark:text-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
-            onClick={clearDraftMove}
-            disabled={tentativePlacements.length === 0}
-          >
-            Clear
-          </button>
-          <button
-            className="rounded-2xl bg-slate-200 dark:bg-slate-700 px-4 py-3 font-semibold text-slate-800 dark:text-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
-            onClick={passTurn}
-            disabled={!myTurn}
-          >
-            Pass
-          </button>
-        </div>
+      <div className="flex flex-wrap items-center gap-3">
+        <p className="text-sm font-semibold uppercase tracking-[0.28em] text-indigo-500">Game</p>
+        <span className="text-slate-300 dark:text-slate-600">·</span>
+        <h2 className="text-xl font-bold text-slate-900 dark:text-white">Turn {view.game.turn}</h2>
+        <span className="text-slate-300 dark:text-slate-600">·</span>
+        <p className="text-slate-600 dark:text-slate-300">
+          {view.game.players.find((player) => player.id === view.game.currentPlayerId)?.name ?? "Waiting"}
+          {view.paused ? " · Paused" : ""}
+        </p>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <button
+          className="rounded-2xl bg-indigo-600 px-4 py-3 font-semibold text-white disabled:cursor-not-allowed disabled:bg-indigo-300"
+          onClick={submitMove}
+          disabled={!myTurn || tentativePlacements.length === 0}
+        >
+          Play
+        </button>
+        <button
+          className="rounded-2xl bg-slate-200 dark:bg-slate-700 px-4 py-3 font-semibold text-slate-800 dark:text-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
+          onClick={clearDraftMove}
+          disabled={tentativePlacements.length === 0}
+        >
+          Clear
+        </button>
+        <button
+          className="rounded-2xl bg-slate-200 dark:bg-slate-700 px-4 py-3 font-semibold text-slate-800 dark:text-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
+          onClick={passTurn}
+          disabled={!myTurn}
+        >
+          Pass
+        </button>
       </div>
 
       {error ? <InlineError message={error} /> : null}
@@ -1394,10 +1403,35 @@ function GameView({
           onDropTile={onDropTile}
           onStartDraggingTile={setDraggedTileId}
           draggedTileId={draggedTileId}
+          onRemoveTile={onRemoveTile}
         />
       </div>
 
-      <div className="rounded-[28px] bg-slate-50 dark:bg-slate-950 p-4">
+      <div
+        className={`rounded-[28px] bg-slate-50 dark:bg-slate-950 p-4 transition-all ${
+          myTurn && draggedTileId && tentativePlacements.some((p) => p.tileId === draggedTileId)
+            ? "ring-4 ring-dashed ring-orange-400 bg-orange-50 dark:bg-orange-950/20"
+            : ""
+        }`}
+        onDragOver={(event) => {
+          if (myTurn && draggedTileId) {
+            const isBoardTile = tentativePlacements.some((p) => p.tileId === draggedTileId);
+            if (isBoardTile) {
+              event.preventDefault();
+            }
+          }
+        }}
+        onDrop={(event) => {
+          event.preventDefault();
+          if (!myTurn || !draggedTileId) return;
+
+          const placement = tentativePlacements.find((p) => p.tileId === draggedTileId);
+          if (placement) {
+            onRemoveTile(placement);
+            setDraggedTileId(null);
+          }
+        }}
+      >
         <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
           <div>
             <h3 className="text-xl font-bold text-slate-900 dark:text-white">Rack</h3>
@@ -1519,14 +1553,14 @@ function ConversationPanel({
   onSendChat: () => void;
 }) {
   return (
-    <aside className="min-w-0 flex min-h-0 flex-col overflow-hidden rounded-[28px] bg-white dark:bg-slate-900 p-4 shadow-xl shadow-slate-200/80 dark:shadow-slate-900/50">
+    <aside className="min-w-0 flex min-h-0 flex-col overflow-hidden rounded-[28px] bg-white dark:bg-slate-950 p-4 shadow-xl shadow-slate-200/80 dark:shadow-slate-950/70 dark:ring-1 dark:ring-white/6">
       <div className="mb-4 flex items-center justify-between gap-3">
         <div>
           <p className="text-sm font-semibold uppercase tracking-[0.28em] text-slate-400 dark:text-slate-500">Conversation</p>
-          <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Agent conversation</h2>
+          <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Chat</h2>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button className="rounded-2xl bg-slate-100 dark:bg-slate-800 px-4 py-3 text-sm font-semibold text-slate-700 dark:text-slate-200" onClick={onCycleMode}>
+          <button className="rounded-2xl bg-slate-100 dark:bg-slate-900 px-4 py-3 text-sm font-semibold text-slate-700 dark:text-slate-200 dark:ring-1 dark:ring-white/8" onClick={onCycleMode}>
             Mode: {modeLabel(mode)}
           </button>
           <button
@@ -1539,7 +1573,7 @@ function ConversationPanel({
         </div>
       </div>
 
-      <div ref={feedRef} className="min-w-0 min-h-0 flex-1 overflow-y-auto overflow-x-hidden rounded-[24px] bg-slate-50 dark:bg-slate-950 p-3">
+      <div ref={feedRef} className="min-w-0 min-h-0 flex-1 overflow-y-auto overflow-x-hidden rounded-[24px] bg-slate-100 dark:bg-slate-900 p-3">
         <div className="grid gap-3">
           {items.map((item) =>
             item.type === "chat" ? (
@@ -1561,13 +1595,13 @@ function ConversationPanel({
               />
             )
           )}
-          {items.length === 0 ? <div className="rounded-[20px] bg-white dark:bg-slate-900 px-4 py-3 text-sm text-slate-500 dark:text-slate-400">No messages yet.</div> : null}
+          {items.length === 0 ? <div className="rounded-[20px] bg-white dark:bg-slate-950 px-4 py-3 text-sm text-slate-500 dark:text-slate-400">No messages yet.</div> : null}
         </div>
       </div>
 
       <div className="mt-4 grid gap-3">
         <input
-          className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-4 py-3 outline-none transition focus:border-indigo-500"
+          className="rounded-2xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-3 text-slate-900 dark:text-white outline-none transition focus:border-indigo-500 dark:placeholder:text-slate-500"
           value={chatDraft}
           onChange={(event) => setChatDraft(event.target.value)}
           onKeyDown={(event) => {
@@ -1577,7 +1611,7 @@ function ConversationPanel({
           }}
           placeholder="Write a message"
         />
-        <button className="rounded-2xl bg-indigo-600 px-4 py-3 font-semibold text-white" onClick={onSendChat}>
+        <button className="rounded-2xl bg-indigo-600 px-4 py-3 font-semibold text-white hover:bg-indigo-700 dark:hover:bg-indigo-500 transition" onClick={onSendChat}>
           Send
         </button>
       </div>
@@ -1671,7 +1705,8 @@ function BoardGrid({
   onClickCell,
   onDropTile,
   onStartDraggingTile,
-  draggedTileId
+  draggedTileId,
+  onRemoveTile
 }: {
   board: BoardCell[][];
   tentativePlacements: PlacementInput[];
@@ -1681,11 +1716,26 @@ function BoardGrid({
   onDropTile: (tileId: string, cell: BoardCell) => void;
   onStartDraggingTile: (tileId: string | null) => void;
   draggedTileId: string | null;
+  onRemoveTile: (placement: PlacementInput) => void;
 }) {
+  const handleBoardTileDragStart = (event: React.DragEvent, placement: PlacementInput) => {
+    if (!myTurn) {
+      event.preventDefault();
+      return;
+    }
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("application/json", JSON.stringify({ type: "remove", placement }));
+    onStartDraggingTile(placement.tileId);
+  };
+
+  const handleBoardTileDragEnd = () => {
+    onStartDraggingTile(null);
+  };
+
   return (
-    <div className="mx-auto w-full max-w-[600px] overflow-x-auto">
+    <div className="mx-auto w-full max-w-[620px] overflow-x-auto rounded-[24px] bg-gradient-to-br from-slate-100 via-white to-slate-200 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)] dark:from-slate-950 dark:via-slate-950 dark:to-slate-900 dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
       <div
-        className="grid min-w-[500px] gap-1 rounded-[20px] bg-slate-700 p-1.5"
+        className="grid min-w-[500px] gap-1 rounded-[20px] bg-slate-700 p-1.5 dark:bg-slate-900 dark:ring-1 dark:ring-white/8"
         style={{ gridTemplateColumns: "repeat(15, minmax(0, 1fr))" }}
       >
         {board.flat().map((cell) => {
@@ -1720,12 +1770,19 @@ function BoardGrid({
               }}
             >
               {tile ? (
-                <span className="flex h-full flex-col items-center justify-center rounded-md bg-amber-200 dark:bg-amber-800/50 px-0.5 text-slate-900 dark:text-white shadow-inner">
+                <span
+                  className={`flex h-full flex-col items-center justify-center rounded-md border border-slate-300/50 bg-gradient-to-b from-slate-100 to-slate-200 px-0.5 text-slate-900 shadow-sm dark:border-amber-300/20 dark:bg-gradient-to-b dark:from-amber-100 dark:to-stone-300 dark:text-stone-900 ${
+                    tentative && myTurn ? "cursor-grab active:cursor-grabbing hover:brightness-95" : ""
+                  }`}
+                  draggable={tentative && myTurn}
+                  onDragStart={(e) => tentative && handleBoardTileDragStart(e, tentative)}
+                  onDragEnd={handleBoardTileDragEnd}
+                >
                   <span className="text-[13px] font-bold md:text-sm">{tile.blank ? tile.assignedLetter : tile.letter}</span>
                   <span className="text-[9px] leading-none">{tile.value}</span>
                 </span>
               ) : (
-                <span className="flex h-full items-center justify-center text-[8px] uppercase tracking-[0.08em] text-slate-700 dark:text-slate-200">
+                <span className={`flex h-full items-center justify-center text-[8px] uppercase tracking-[0.08em] ${bonusLabelClasses(cell.bonus)}`}>
                   {labelBonus(cell.bonus)}
                 </span>
               )}
@@ -1756,6 +1813,16 @@ function RackTile({
   onDragStart: () => void;
   onDragEnd: () => void;
 }) {
+  const [dragY, setDragY] = useState<number | null>(null);
+
+  // Calculate scale based on Y position during drag
+  // Start at 1.0, increase to 1.1 as it moves towards the board
+  const scale = dragY !== null ? 1 + (dragY / 400) * 0.1 : 1;
+
+  const handleDrag = (event: React.DragEvent) => {
+    setDragY(event.clientY);
+  };
+
   return (
     <button
       draggable={!disabled}
@@ -1765,19 +1832,28 @@ function RackTile({
           return;
         }
         onDragStart();
+        setDragY(0);
       }}
-      onDragEnd={onDragEnd}
+      onDrag={handleDrag}
+      onDragEnd={() => {
+        onDragEnd();
+        setDragY(null);
+      }}
       onClick={onSelect}
       onContextMenu={(event) => {
         event.preventDefault();
         onToggleExchange();
       }}
       disabled={disabled}
-      className={`min-h-[78px] rounded-[18px] border px-2 py-2 text-slate-900 dark:text-white shadow-sm transition ${
-        selected ? "border-indigo-500 ring-2 ring-indigo-500" : "border-amber-300 dark:border-amber-700"
-      } ${exchange ? "bg-orange-200 dark:bg-orange-800/50" : "bg-gradient-to-b from-amber-100 to-amber-300 dark:from-amber-900/40 dark:to-amber-800/60"} ${
+      className={`min-h-[78px] rounded-[18px] border px-2 py-2 text-slate-900 dark:text-white shadow-sm transition-all duration-200 ${
+        selected ? "border-indigo-500 ring-2 ring-indigo-500" : "border-slate-200 dark:border-slate-700"
+      } ${exchange ? "bg-slate-200 dark:bg-slate-700/50" : "bg-slate-100 dark:bg-slate-800/40"} ${
         disabled ? "cursor-not-allowed opacity-50" : "hover:-translate-y-0.5"
       }`}
+      style={{
+        transform: dragY !== null ? `scale(${Math.min(scale, 1.1)})` : undefined,
+        transition: "all 200ms cubic-bezier(0.4, 0, 0.2, 1)"
+      }}
     >
       <span className="flex h-full flex-col items-center justify-between">
         <span className="text-[26px] font-bold leading-none">{tile.blank ? "?" : tile.letter}</span>
@@ -2042,7 +2118,7 @@ function ConversationTraceCard({
   const showRack = Boolean(rack && rack.length > 0 && (event.kind === "reasoning" || event.kind === "provider_reply" || event.kind === "status"));
   const showFallbackStats = mode === "dev" && trace.turnCount > 0;
   return (
-    <div className={`min-w-0 overflow-hidden rounded-[22px] border p-3 ${styles.card}`}>
+    <div className={`min-w-0 overflow-hidden rounded-[22px] p-3 ${styles.card}`}>
       <button className="grid min-w-0 w-full gap-3 text-left" onClick={onToggle}>
         <div className="min-w-0">
           <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
@@ -2075,14 +2151,14 @@ function ConversationTraceCard({
             {event.content || "(vide)"}
           </div>
           {showRack ? (
-            <div className="mt-3 rounded-[16px] bg-white dark:bg-slate-900/60 p-3">
+            <div className="mt-3 rounded-[16px] bg-white dark:bg-slate-950 p-3">
               <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Rack</p>
               <SmallRack rack={rack ?? []} />
             </div>
           ) : null}
         </div>
         <div className="flex items-end justify-start">
-          <ModelLogo trace={trace} size="sm" />
+          <ModelLogo trace={trace} size="sm" borderless />
         </div>
       </button>
     </div>
@@ -2101,10 +2177,10 @@ function ChatRow({
   const outgoing = message.kind === "agent";
   return (
     <div className={`flex gap-3 ${outgoing ? "flex-row" : "flex-row-reverse"}`}>
-      <ModelLogo seat={seat} trace={trace} name={message.authorName} size="sm" />
+      <ModelLogo seat={seat} trace={trace} name={message.authorName} size="sm" borderless />
       <div
         className={`max-w-[85%] rounded-[22px] px-4 py-3 shadow-sm ${
-          outgoing ? "rounded-tl-none bg-indigo-600 text-white" : "rounded-tr-none bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200"
+          outgoing ? "rounded-tl-none bg-indigo-600 text-white dark:bg-indigo-500" : "rounded-tr-none bg-white dark:bg-slate-950 text-slate-800 dark:text-slate-200"
         }`}
       >
         <p className={`text-xs font-bold ${outgoing ? "text-indigo-100" : "text-slate-400 dark:text-slate-500"}`}>{message.authorName}</p>
@@ -2118,10 +2194,7 @@ function SmallRack({ rack }: { rack: Tile[] }) {
   return (
     <div className="flex flex-wrap gap-1.5">
       {rack.map((tile) => (
-        <div
-          key={tile.id}
-          className="flex h-9 w-9 flex-col items-center justify-center rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-100 dark:bg-amber-900/30 text-slate-900 dark:text-white shadow-sm"
-        >
+        <div key={tile.id} className="flex h-9 w-9 flex-col items-center justify-center rounded-lg bg-slate-100 dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm">
           <span className="text-xs font-bold leading-none">{tile.blank ? tile.assignedLetter || "?" : tile.letter}</span>
           <span className="text-[8px] leading-none">{tile.value}</span>
         </div>
@@ -2134,18 +2207,20 @@ function ModelLogo({
   seat,
   trace,
   name,
-  size
+  size,
+  borderless = false
 }: {
   seat?: Pick<PlayerSeat, "name" | "kind" | "agentConfig"> | Pick<RoomSummary["seatSummaries"][number], "name" | "kind">;
   trace?: Pick<AgentTrace, "playerName" | "provider" | "model">;
   name?: string;
   size: "sm" | "lg";
+  borderless?: boolean;
 }) {
   const kind = seat?.kind;
   const model = "agentConfig" in (seat ?? {}) ? seat?.agentConfig?.model : trace?.model;
   const provider = "agentConfig" in (seat ?? {}) ? seat?.agentConfig?.provider : trace?.provider;
   const resolvedName = seat?.name ?? trace?.playerName ?? name ?? "Agent";
-  const className = `${size === "lg" ? "h-12 w-12" : "h-10 w-10"} rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-1 object-contain`;
+  const className = `${size === "lg" ? "h-12 w-12" : "h-10 w-10"} rounded-2xl bg-white p-1 object-contain shadow-sm ${borderless ? "" : "border border-slate-200 dark:border-slate-300"}`;
   if (resolvedName.trim().toLowerCase() === "system") {
     return <img src="/logos/system.png" alt="System" className={className} />;
   }
@@ -2289,17 +2364,34 @@ function defaultBaseUrlForProvider(provider: AgentConfig["provider"]): string {
 function bonusClasses(bonus: BoardCell["bonus"]): string {
   switch (bonus) {
     case "dl":
-      return "border-cyan-200 dark:border-cyan-700 bg-cyan-100 dark:bg-cyan-900/30";
+      return "border-cyan-200 dark:border-cyan-700/80 bg-cyan-100 dark:bg-cyan-950";
     case "tl":
-      return "border-cyan-300 dark:border-cyan-600 bg-cyan-300 dark:bg-cyan-700/50";
+      return "border-sky-300 dark:border-sky-700/80 bg-sky-300 dark:bg-sky-900";
     case "dw":
-      return "border-orange-200 dark:border-orange-700 bg-orange-100 dark:bg-orange-900/30";
+      return "border-rose-200 dark:border-rose-700/80 bg-orange-100 dark:bg-rose-950";
     case "tw":
-      return "border-orange-300 bg-orange-300";
+      return "border-orange-300 dark:border-orange-700/80 bg-orange-300 dark:bg-orange-950";
     case "center":
-      return "border-orange-300 bg-orange-200 dark:bg-orange-800/50";
+      return "border-amber-300 dark:border-amber-700/80 bg-orange-200 dark:bg-amber-950";
     default:
-      return "border-amber-100 bg-amber-50";
+      return "border-amber-100 bg-amber-50 dark:border-slate-700 dark:bg-slate-800";
+  }
+}
+
+function bonusLabelClasses(bonus: BoardCell["bonus"]): string {
+  switch (bonus) {
+    case "dl":
+      return "text-cyan-700 dark:text-cyan-300";
+    case "tl":
+      return "text-cyan-800 dark:text-sky-300";
+    case "dw":
+      return "text-orange-700 dark:text-rose-300";
+    case "tw":
+      return "text-orange-800 dark:text-orange-300";
+    case "center":
+      return "text-orange-700 dark:text-amber-300";
+    default:
+      return "text-slate-600 dark:text-slate-300";
   }
 }
 
@@ -2505,26 +2597,26 @@ function traceEventClasses(event: AgentTraceEvent): { card: string; badge: strin
 
   switch (event.kind) {
     case "tool_call":
-      return { card: "border-cyan-200 dark:border-cyan-700 bg-cyan-50", badge: "bg-cyan-100 dark:bg-cyan-900/30 text-cyan-800", content: "text-cyan-950" };
+      return { card: "bg-cyan-50 dark:bg-cyan-950/55", badge: "bg-cyan-100 dark:bg-cyan-900/40 text-cyan-800 dark:text-cyan-200", content: "text-cyan-950 dark:text-cyan-100" };
     case "tool_result":
       if (isError) {
-        return { card: "border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20", badge: "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400", content: "text-red-900" };
+        return { card: "bg-red-50 dark:bg-red-950/50", badge: "bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300", content: "text-red-900 dark:text-red-100" };
       }
       if (isSuccess) {
-        return { card: "border-emerald-200 bg-emerald-50", badge: "bg-emerald-100 text-emerald-700", content: "text-emerald-950" };
+        return { card: "bg-emerald-50 dark:bg-emerald-950/45", badge: "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300", content: "text-emerald-950 dark:text-emerald-100" };
       }
-      return { card: "border-amber-200 bg-amber-50", badge: "bg-amber-100 dark:bg-amber-900/30 text-amber-700", content: "text-amber-950" };
+      return { card: "bg-amber-50 dark:bg-amber-950/45", badge: "bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300", content: "text-amber-950 dark:text-amber-100" };
     case "reasoning":
-      return { card: "border-violet-200 bg-violet-50", badge: "bg-violet-100 text-violet-700", content: "text-violet-950" };
+      return { card: "bg-violet-50 dark:bg-violet-950/45", badge: "bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300", content: "text-violet-950 dark:text-violet-100" };
     case "provider_reply":
-      return { card: "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900", badge: "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300", content: "text-slate-700 dark:text-slate-200" };
+      return { card: "bg-white dark:bg-slate-950", badge: "bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-300", content: "text-slate-700 dark:text-slate-200" };
     case "status":
       return {
-        card: isError ? "border-orange-200 dark:border-orange-700 bg-orange-50" : "border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950",
-        badge: isError ? "bg-orange-100 dark:bg-orange-900/30 text-orange-700" : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300",
-        content: isError ? "text-orange-950" : "text-slate-700 dark:text-slate-200"
+        card: isError ? "bg-orange-50 dark:bg-orange-950/45" : "bg-slate-50 dark:bg-slate-950",
+        badge: isError ? "bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300" : "bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-300",
+        content: isError ? "text-orange-950 dark:text-orange-100" : "text-slate-700 dark:text-slate-200"
       };
     default:
-      return { card: "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900", badge: "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300", content: "text-slate-700 dark:text-slate-200" };
+      return { card: "bg-white dark:bg-slate-950", badge: "bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-300", content: "text-slate-700 dark:text-slate-200" };
   }
 }
