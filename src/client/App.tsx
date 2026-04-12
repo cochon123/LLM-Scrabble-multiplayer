@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { io, type Socket } from "socket.io-client";
-import { buildDefaultAgentSystemPrompt, isDefaultAgentSystemPrompt } from "../shared/agent-prompt";
+import { buildDefaultAgentSystemPrompt, isDefaultAgentSystemPrompt } from "../shared/agent_prompt";
 import type {
   AgentConfig,
   AgentProvider,
@@ -26,7 +26,6 @@ import type {
 const CLIENT_ID_KEY = "scrabble-codex-client-id";
 const DISPLAY_NAME_KEY = "scrabble-codex-display-name";
 const CONVERSATION_MODE_KEY = "scrabble-codex-conversation-mode";
-const AUTH_TOKEN_KEY = "scrabble-codex-auth-token";
 const API_BASE_URL = import.meta.env.DEV ? "http://localhost:3001" : "";
 
 type ClientSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
@@ -52,11 +51,10 @@ export function App() {
   const [route, setRoute] = useState<Route>(() => parseRoute(window.location.pathname));
   const [clientId] = useState(() => getOrCreateClientId());
   const [displayName, setDisplayName] = useState(() => localStorage.getItem(DISPLAY_NAME_KEY) || "Player");
-  const [authToken, setAuthToken] = useState(() => localStorage.getItem(AUTH_TOKEN_KEY) || "");
   const [authUser, setAuthUser] = useState<AuthUserView | null>(null);
   const [authDraftNickname, setAuthDraftNickname] = useState(() => localStorage.getItem(DISPLAY_NAME_KEY) || "");
   const [authDraftPassword, setAuthDraftPassword] = useState("");
-  const [authLoading, setAuthLoading] = useState(Boolean(localStorage.getItem(AUTH_TOKEN_KEY)));
+  const [authLoading, setAuthLoading] = useState(true);
   const [authError, setAuthError] = useState("");
   const [conversationMode, setConversationMode] = useState<ConversationMode>(
     () => (localStorage.getItem(CONVERSATION_MODE_KEY) as ConversationMode) || "user"
@@ -82,16 +80,16 @@ export function App() {
   const socket = useMemo<ClientSocket>(() => {
     const serverUrl = import.meta.env.DEV ? "http://localhost:3001" : undefined;
     return io(serverUrl, {
-      autoConnect: Boolean(authToken),
+      autoConnect: Boolean(authUser),
       transports: ["websocket"],
       reconnection: true,
+      withCredentials: true,
       auth: {
         clientId,
-        displayName,
-        authToken
+        displayName
       }
     });
-  }, [clientId, authToken, displayName]);
+  }, [clientId, authUser, displayName]);
 
   useEffect(() => {
     const handlePopState = () => setRoute(parseRoute(window.location.pathname));
@@ -102,38 +100,22 @@ export function App() {
   useEffect(() => {
     socket.auth = {
       clientId,
-      displayName,
-      authToken
+      displayName
     };
-  }, [socket, clientId, displayName, authToken]);
+  }, [socket, clientId, displayName]);
 
   useEffect(() => {
     localStorage.setItem(DISPLAY_NAME_KEY, displayName);
   }, [displayName]);
 
   useEffect(() => {
-    if (authToken) {
-      localStorage.setItem(AUTH_TOKEN_KEY, authToken);
-    } else {
-      localStorage.removeItem(AUTH_TOKEN_KEY);
-    }
-  }, [authToken]);
-
-  useEffect(() => {
     localStorage.setItem(CONVERSATION_MODE_KEY, conversationMode);
   }, [conversationMode]);
 
   useEffect(() => {
-    if (!authToken) {
-      setAuthUser(null);
-      setAuthLoading(false);
-      return;
-    }
     let cancelled = false;
     setAuthLoading(true);
-    void fetch(`${API_BASE_URL}/api/auth/me`, {
-      headers: authHeaders(authToken)
-    })
+    void apiFetch("/api/auth/me")
       .then(async (response) => {
         if (!response.ok) {
           throw new Error("unauthorized");
@@ -153,9 +135,8 @@ export function App() {
         if (cancelled) {
           return;
         }
-        setAuthToken("");
         setAuthUser(null);
-        setAuthError("Please sign in.");
+        setAuthError("");
       })
       .finally(() => {
         if (!cancelled) {
@@ -165,7 +146,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [authToken]);
+  }, []);
 
   useEffect(() => {
     function acceptSync(nextView: RoomView): boolean {
@@ -279,21 +260,19 @@ export function App() {
     if (route.page !== "home") {
       return;
     }
-    if (!authToken) {
+    if (!authUser) {
       setRooms([]);
       return;
     }
     expectedRoomIdRef.current = null;
-    ensureSocketReady(socket, clientId, displayName, authToken, () => {
+    ensureSocketReady(socket, clientId, displayName, () => {
       socket.emit("leave_room");
     });
     let cancelled = false;
 
     const loadRooms = async () => {
       try {
-        const response = await fetch(`${API_BASE_URL}/api/rooms`, {
-          headers: authHeaders(authToken)
-        });
+        const response = await apiFetch("/api/rooms");
         if (!response.ok) {
           throw new Error(String(response.status));
         }
@@ -317,7 +296,7 @@ export function App() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [route.page, authToken, socket, clientId, displayName]);
+  }, [route.page, authUser, socket, clientId, displayName]);
 
   useEffect(() => {
     if (route.page !== "room") {
@@ -325,7 +304,7 @@ export function App() {
       setLoadingRoom(false);
       return;
     }
-    if (!authToken) {
+    if (!authUser) {
       setView(null);
       setLoadingRoom(false);
       setError("Please sign in.");
@@ -339,12 +318,7 @@ export function App() {
 
     const loadRoom = async () => {
       try {
-        const response = await fetch(
-          `${API_BASE_URL}/api/rooms/${encodeURIComponent(route.roomId)}?clientId=${encodeURIComponent(clientId)}`,
-          {
-            headers: authHeaders(authToken)
-          }
-        );
+        const response = await apiFetch(`/api/rooms/${encodeURIComponent(route.roomId)}?clientId=${encodeURIComponent(clientId)}`);
         if (!response.ok) {
           throw new Error(String(response.status));
         }
@@ -366,14 +340,14 @@ export function App() {
     setPendingAction("watch");
     pendingActionRef.current = "watch";
     expectedRoomIdRef.current = route.roomId;
-    ensureSocketReady(socket, clientId, displayName, authToken, () => {
+    ensureSocketReady(socket, clientId, displayName, () => {
       socket.emit("watch_room", { roomId: route.roomId, displayName });
     });
 
     return () => {
       cancelled = true;
     };
-  }, [route, socket, clientId, displayName, authToken]);
+  }, [route, socket, clientId, displayName, authUser]);
 
   useEffect(() => {
     setTentativePlacements([]);
@@ -415,7 +389,7 @@ export function App() {
     setPendingAction("create");
     pendingActionRef.current = "create";
     expectedRoomIdRef.current = view?.roomId ?? null;
-    ensureSocketReady(socket, clientId, displayName, authToken, () => {
+    ensureSocketReady(socket, clientId, displayName, () => {
       socket.emit("leave_room");
       socket.emit("create_room", { displayName });
     });
@@ -434,7 +408,7 @@ export function App() {
     setPendingAction("join");
     pendingActionRef.current = "join";
     expectedRoomIdRef.current = nextRoomId;
-    ensureSocketReady(socket, clientId, displayName, authToken, () => {
+    ensureSocketReady(socket, clientId, displayName, () => {
       socket.emit("leave_room");
       socket.emit("join_room", { roomId: nextRoomId, displayName });
     });
@@ -445,15 +419,14 @@ export function App() {
   }
 
   async function deleteRoom(roomId: string) {
-    if (!authUser?.isAdmin || !authToken) {
+    if (!authUser?.isAdmin) {
       return;
     }
     if (!window.confirm(`Delete game ${roomId}? This will also stop a live game.`)) {
       return;
     }
-    const response = await fetch(`${API_BASE_URL}/api/games/${encodeURIComponent(roomId)}`, {
-      method: "DELETE",
-      headers: authHeaders(authToken)
+    const response = await apiFetch(`/api/games/${encodeURIComponent(roomId)}`, {
+      method: "DELETE"
     });
     if (!response.ok) {
       const payload = (await response.json().catch(() => ({ error: "Could not delete game." }))) as { error?: string };
@@ -471,7 +444,7 @@ export function App() {
     setAuthLoading(true);
     setAuthError("");
     try {
-      const response = await fetch(`${API_BASE_URL}/api/auth/${mode}`, {
+      const response = await apiFetch(`/api/auth/${mode}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -481,11 +454,10 @@ export function App() {
           password: authDraftPassword
         })
       });
-      const payload = (await response.json()) as { token?: string; user?: AuthUserView; error?: string };
-      if (!response.ok || !payload.token || !payload.user) {
+      const payload = (await response.json()) as { user?: AuthUserView; error?: string };
+      if (!response.ok || !payload.user) {
         throw new Error(payload.error || `${mode} failed.`);
       }
-      setAuthToken(payload.token);
       setAuthUser(payload.user);
       setDisplayName(payload.user.nickname);
       setAuthDraftNickname(payload.user.nickname);
@@ -499,7 +471,9 @@ export function App() {
   }
 
   function logout() {
-    setAuthToken("");
+    void apiFetch("/api/auth/logout", {
+      method: "POST"
+    });
     setAuthUser(null);
     setView(null);
     setRooms([]);
@@ -510,13 +484,12 @@ export function App() {
   }
 
   async function saveDefaultApiKey(provider: AgentProvider, apiKey: string) {
-    if (!authToken) {
+    if (!authUser) {
       return;
     }
-    const response = await fetch(`${API_BASE_URL}/api/auth/default-api-key`, {
+    const response = await apiFetch("/api/auth/default-api-key", {
       method: "POST",
       headers: {
-        ...authHeaders(authToken),
         "Content-Type": "application/json"
       },
       body: JSON.stringify({ provider, apiKey })
@@ -532,6 +505,12 @@ export function App() {
     if (!view) {
       return;
     }
+    const sanitizedPatch = patch.agentConfig
+      ? {
+          ...patch,
+          agentConfig: sanitizeAgentConfigForClientView(patch.agentConfig)
+        }
+      : patch;
     setError("");
     setView((current) =>
       current
@@ -543,8 +522,8 @@ export function App() {
                 candidate.id === seat.id
                   ? {
                       ...candidate,
-                      ...patch,
-                      agentConfig: patch.agentConfig ?? candidate.agentConfig
+                      ...sanitizedPatch,
+                      agentConfig: sanitizedPatch.agentConfig ?? candidate.agentConfig
                     }
                   : candidate
               )
@@ -651,7 +630,7 @@ export function App() {
     }
     setPendingAction("submit_move");
     pendingActionRef.current = "submit_move";
-    ensureSocketReady(socket, clientId, displayName, authToken, () => {
+    ensureSocketReady(socket, clientId, displayName, () => {
       socket.emit("submit_move", {
         roomId: view.roomId,
         placements: tentativePlacements
@@ -665,7 +644,7 @@ export function App() {
     }
     setPendingAction("exchange_tiles");
     pendingActionRef.current = "exchange_tiles";
-    ensureSocketReady(socket, clientId, displayName, authToken, () => {
+    ensureSocketReady(socket, clientId, displayName, () => {
       socket.emit("exchange_tiles", {
         roomId: view.roomId,
         tileIds: exchangeSelection
@@ -679,7 +658,7 @@ export function App() {
     }
     setPendingAction("pass");
     pendingActionRef.current = "pass";
-    ensureSocketReady(socket, clientId, displayName, authToken, () => {
+    ensureSocketReady(socket, clientId, displayName, () => {
       socket.emit("pass_turn", { roomId: view.roomId });
     });
   }
@@ -690,7 +669,7 @@ export function App() {
     }
     setPendingAction("chat");
     pendingActionRef.current = "chat";
-    ensureSocketReady(socket, clientId, displayName, authToken, () => {
+    ensureSocketReady(socket, clientId, displayName, () => {
       socket.emit("send_chat", {
         roomId: view.roomId,
         text: chatDraft
@@ -705,7 +684,7 @@ export function App() {
     }
     setPendingAction("legal_moves");
     pendingActionRef.current = "legal_moves";
-    ensureSocketReady(socket, clientId, displayName, authToken, () => {
+    ensureSocketReady(socket, clientId, displayName, () => {
       socket.emit("get_legal_moves", { roomId: view.roomId });
     });
   }
@@ -716,7 +695,7 @@ export function App() {
     }
     setPendingAction("pause");
     pendingActionRef.current = "pause";
-    ensureSocketReady(socket, clientId, displayName, authToken, () => {
+    ensureSocketReady(socket, clientId, displayName, () => {
       socket.emit("toggle_pause", { roomId: view.roomId });
     });
   }
@@ -725,7 +704,7 @@ export function App() {
     if (!view) {
       return;
     }
-    ensureSocketReady(socket, clientId, displayName, authToken, () => {
+    ensureSocketReady(socket, clientId, displayName, () => {
       socket.emit("start_game", { roomId: view.roomId });
     });
   }
@@ -746,7 +725,7 @@ export function App() {
     : "Waiting";
 
   return (
-    <div className={`bg-slate-50 text-slate-900 ${route.page === "home" ? "min-h-screen" : "h-screen overflow-hidden"}`}>
+    <div className={`bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white ${route.page === "home" ? "min-h-screen" : "h-screen overflow-hidden"}`}>
       {!authUser ? (
         <HomePage
           displayName={displayName}
@@ -892,37 +871,37 @@ function HomePage({
   onDelete: (roomId: string) => void;
 }) {
   return (
-    <div className="min-h-screen overflow-y-auto bg-slate-50 px-4 py-6 md:px-6">
+    <div className="min-h-screen overflow-y-auto bg-slate-50 dark:bg-slate-950 px-4 py-6 md:px-6">
       <div className="mx-auto grid max-w-7xl gap-6">
-        <section className="rounded-[28px] bg-white p-6 shadow-xl shadow-slate-200/80">
+        <section className="rounded-[28px] bg-white dark:bg-slate-900 p-6 shadow-xl shadow-slate-200/80 dark:shadow-slate-900/50">
           <div className="grid gap-6 xl:grid-cols-[1.3fr_0.7fr]">
             <div>
               <p className="text-sm font-semibold uppercase tracking-[0.3em] text-indigo-500">Scrabble Webapp</p>
-              <h1 className="mt-2 text-5xl font-black tracking-[0.08em] text-slate-900 md:text-7xl">SCRABBLE CODEX</h1>
-              <p className="mt-4 max-w-3xl text-lg leading-8 text-slate-600">
+              <h1 className="mt-2 text-5xl font-black tracking-[0.08em] text-slate-900 dark:text-white md:text-7xl">SCRABBLE CODEX</h1>
+              <p className="mt-4 max-w-3xl text-lg leading-8 text-slate-600 dark:text-slate-300">
                 Shareable multiplayer rooms, spectator mode, AI agents, real-time chat, and authoritative server-side
                 orchestration.
               </p>
             </div>
-            <div className="grid gap-4 rounded-[28px] bg-slate-50 p-5">
+            <div className="grid gap-4 rounded-[28px] bg-slate-50 dark:bg-slate-950 p-5">
               {authUser ? (
                 <>
-                  <div className="rounded-[24px] bg-white p-4">
-                    <p className="text-sm font-semibold text-slate-500">Signed in as</p>
+                  <div className="rounded-[24px] bg-white dark:bg-slate-900 p-4">
+                    <p className="text-sm font-semibold text-slate-500 dark:text-slate-400">Signed in as</p>
                     <div className="mt-1 flex items-center justify-between gap-3">
                       <div>
-                        <p className="text-xl font-bold text-slate-900">{authUser.nickname}</p>
-                        <p className="text-sm text-slate-500">{authUser.isAdmin ? "Admin" : "User"}</p>
+                        <p className="text-xl font-bold text-slate-900 dark:text-white">{authUser.nickname}</p>
+                        <p className="text-sm text-slate-500 dark:text-slate-400">{authUser.isAdmin ? "Admin" : "User"}</p>
                       </div>
-                      <button className="rounded-2xl bg-slate-200 px-4 py-3 font-semibold text-slate-800" onClick={onLogout}>
+                      <button className="rounded-2xl bg-slate-200 dark:bg-slate-700 px-4 py-3 font-semibold text-slate-800 dark:text-slate-200 hover:bg-slate-300 dark:hover:bg-slate-600 transition" onClick={onLogout}>
                         Sign out
                       </button>
                     </div>
                   </div>
-                  <label className="grid gap-2 text-sm font-semibold text-slate-700">
+                  <label className="grid gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
                     Room code
                     <input
-                      className="rounded-2xl border border-slate-200 bg-white px-4 py-3 uppercase outline-none transition focus:border-indigo-500"
+                      className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-3 uppercase outline-none transition focus:border-indigo-500"
                       value={roomCode}
                       onChange={(event) => setRoomCode(event.target.value)}
                     />
@@ -931,7 +910,7 @@ function HomePage({
                     <button className="rounded-2xl bg-indigo-600 px-5 py-3 font-semibold text-white" onClick={onCreate}>
                       Create room
                     </button>
-                    <button className="rounded-2xl bg-slate-200 px-5 py-3 font-semibold text-slate-800" onClick={onJoin}>
+                    <button className="rounded-2xl bg-slate-200 dark:bg-slate-700 px-5 py-3 font-semibold text-slate-800 dark:text-slate-200 hover:bg-slate-300 dark:hover:bg-slate-600 transition" onClick={onJoin}>
                       Join as player
                     </button>
                   </div>
@@ -939,19 +918,19 @@ function HomePage({
                 </>
               ) : (
                 <>
-                  <label className="grid gap-2 text-sm font-semibold text-slate-700">
+                  <label className="grid gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
                     Nickname
                     <input
-                      className="rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-indigo-500"
+                      className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-3 outline-none transition focus:border-indigo-500"
                       value={authDraftNickname}
                       onChange={(event) => setAuthDraftNickname(event.target.value)}
                     />
                   </label>
-                  <label className="grid gap-2 text-sm font-semibold text-slate-700">
+                  <label className="grid gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
                     Password
                     <input
                       type="password"
-                      className="rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-indigo-500"
+                      className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-3 outline-none transition focus:border-indigo-500"
                       value={authDraftPassword}
                       onChange={(event) => setAuthDraftPassword(event.target.value)}
                     />
@@ -965,7 +944,7 @@ function HomePage({
                       Sign in
                     </button>
                     <button
-                      className="rounded-2xl bg-slate-200 px-5 py-3 font-semibold text-slate-800 disabled:opacity-50"
+                      className="rounded-2xl bg-slate-200 dark:bg-slate-700 px-5 py-3 font-semibold text-slate-800 dark:text-slate-200 disabled:opacity-50"
                       onClick={onRegister}
                       disabled={authLoading}
                     >
@@ -979,13 +958,13 @@ function HomePage({
           </div>
         </section>
 
-        <section className="rounded-[28px] bg-white p-6 shadow-xl shadow-slate-200/80">
+        <section className="rounded-[28px] bg-white dark:bg-slate-900 p-6 shadow-xl shadow-slate-200/80 dark:shadow-slate-900/50">
           <div className="mb-5 flex items-center justify-between gap-3">
             <div>
-              <p className="text-sm font-semibold uppercase tracking-[0.28em] text-slate-400">Directory</p>
-              <h2 className="text-3xl font-bold text-slate-900">Active rooms</h2>
+              <p className="text-sm font-semibold uppercase tracking-[0.28em] text-slate-400 dark:text-slate-500">Directory</p>
+              <h2 className="text-3xl font-bold text-slate-900 dark:text-white">Active rooms</h2>
             </div>
-            <span className="rounded-full bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-600">{rooms.length} room(s)</span>
+            <span className="rounded-full bg-slate-100 dark:bg-slate-800 px-4 py-2 text-sm font-semibold text-slate-600 dark:text-slate-300">{rooms.length} room(s)</span>
           </div>
 
           <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">
@@ -999,7 +978,7 @@ function HomePage({
               />
             ))}
             {rooms.length === 0 ? (
-              <div className="rounded-[24px] border border-dashed border-slate-300 bg-slate-50 p-6 text-slate-500">
+              <div className="rounded-[24px] border border-dashed border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-950 p-6 text-slate-500 dark:text-slate-400">
                 No active rooms right now.
               </div>
             ) : null}
@@ -1118,18 +1097,18 @@ function RoomPage(props: {
 
   if (loadingRoom && !view) {
     return (
-      <div className="flex h-full items-center justify-center bg-slate-50">
-        <div className="rounded-[24px] bg-white px-6 py-5 shadow-xl shadow-slate-200/80">Loading room…</div>
+      <div className="flex h-full items-center justify-center bg-slate-50 dark:bg-slate-950">
+        <div className="rounded-[24px] bg-white dark:bg-slate-900 px-6 py-5 shadow-xl shadow-slate-200/80 dark:shadow-slate-900/50">Loading room…</div>
       </div>
     );
   }
 
   if (!view) {
     return (
-      <div className="flex h-full items-center justify-center bg-slate-50 px-4">
-        <div className="grid max-w-xl gap-4 rounded-[28px] bg-white p-8 text-center shadow-xl shadow-slate-200/80">
+      <div className="flex h-full items-center justify-center bg-slate-50 dark:bg-slate-950 px-4">
+        <div className="grid max-w-xl gap-4 rounded-[28px] bg-white dark:bg-slate-900 p-8 text-center shadow-xl shadow-slate-200/80 dark:shadow-slate-900/50">
           <h1 className="text-3xl font-bold">Room not found</h1>
-          <p className="text-slate-600">The room `{routeRoomId}` does not exist or is no longer available in memory.</p>
+          <p className="text-slate-600 dark:text-slate-300">The room `{routeRoomId}` does not exist or is no longer available in memory.</p>
           <button className="rounded-2xl bg-indigo-600 px-5 py-3 font-semibold text-white" onClick={() => window.location.assign("/")}>
             Back to home
           </button>
@@ -1144,23 +1123,23 @@ function RoomPage(props: {
         view.status === "lobby" ? "overflow-y-auto overflow-x-hidden" : "overflow-hidden"
       }`}
     >
-      <header className="mb-3 rounded-[28px] bg-white px-5 py-4 shadow-xl shadow-slate-200/80">
+      <header className="mb-3 rounded-[28px] bg-white dark:bg-slate-900 px-5 py-4 shadow-xl shadow-slate-200/80 dark:shadow-slate-900/50">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <p className="text-sm font-semibold uppercase tracking-[0.3em] text-indigo-500">Room {view.roomId}</p>
-            <h1 className="mt-1 text-4xl font-black tracking-[0.08em] text-slate-900 md:text-5xl">SCRABBLE CODEX</h1>
-            <p className="mt-2 text-sm text-slate-500">
+            <h1 className="mt-1 text-4xl font-black tracking-[0.08em] text-slate-900 dark:text-white md:text-5xl">SCRABBLE CODEX</h1>
+            <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
               {view.status === "lobby" ? "Public lobby" : boardTitle}
               {view.paused ? " · Paused" : ""}
             </p>
           </div>
           <div className="grid gap-3 md:min-w-[280px]">
-            <div className="rounded-[24px] bg-slate-50 px-4 py-3">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Account</p>
-              <p className="mt-1 text-lg font-bold text-slate-900">{displayName}</p>
+            <div className="rounded-[24px] bg-slate-50 dark:bg-slate-950 px-4 py-3">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400 dark:text-slate-500">Account</p>
+              <p className="mt-1 text-lg font-bold text-slate-900 dark:text-white">{displayName}</p>
             </div>
             <div className="flex flex-wrap items-center justify-end gap-2">
-              <span className="rounded-full bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-600">
+              <span className="rounded-full bg-slate-100 dark:bg-slate-800 px-4 py-2 text-sm font-semibold text-slate-600 dark:text-slate-300">
                 {view.viewerRole === "player" ? "Player" : "Spectator"}
               </span>
               {view.status === "lobby" && view.viewerRole === "spectator" && activeHumanSeatAvailable ? (
@@ -1178,23 +1157,23 @@ function RoomPage(props: {
           view.status === "lobby" ? "items-start" : "min-h-0 flex-1"
         }`}
       >
-        <aside className="min-h-0 overflow-y-auto rounded-[28px] bg-white p-4 shadow-xl shadow-slate-200/80">
+        <aside className="min-h-0 overflow-y-auto rounded-[28px] bg-white dark:bg-slate-900 p-4 shadow-xl shadow-slate-200/80 dark:shadow-slate-900/50">
           <div className="mb-4">
-            <p className="text-sm font-semibold uppercase tracking-[0.28em] text-slate-400">Leaderboard</p>
-            <h2 className="text-2xl font-bold text-slate-900">Scores</h2>
+            <p className="text-sm font-semibold uppercase tracking-[0.28em] text-slate-400 dark:text-slate-500">Leaderboard</p>
+            <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Scores</h2>
           </div>
           <div className="grid gap-3">
             {view.game.players.map((player) => (
               <LeaderboardCard key={player.id} player={player} />
             ))}
           </div>
-          <div className="mt-4 rounded-[24px] bg-slate-50 p-4 text-sm text-slate-600">
+          <div className="mt-4 rounded-[24px] bg-slate-50 dark:bg-slate-950 p-4 text-sm text-slate-600 dark:text-slate-300">
             <p>Spectators: {view.spectatorCount}</p>
             <p className="mt-1">Status: {roomStatusLabel(view.status)}</p>
           </div>
         </aside>
 
-        <section className="min-h-0 overflow-y-auto rounded-[28px] bg-white p-4 shadow-xl shadow-slate-200/80">
+        <section className="min-h-0 overflow-y-auto rounded-[28px] bg-white dark:bg-slate-900 p-4 shadow-xl shadow-slate-200/80 dark:shadow-slate-900/50">
           {view.status === "lobby" ? (
             <LobbyView
               view={view}
@@ -1277,8 +1256,8 @@ function LobbyView({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-sm font-semibold uppercase tracking-[0.28em] text-indigo-500">Public lobby</p>
-          <h2 className="text-3xl font-bold text-slate-900">Configure room</h2>
-          <p className="mt-2 text-slate-600">Spectators can watch this room live and send chat messages.</p>
+          <h2 className="text-3xl font-bold text-slate-900 dark:text-white">Configure room</h2>
+          <p className="mt-2 text-slate-600 dark:text-slate-300">Spectators can watch this room live and send chat messages.</p>
         </div>
         {isHost ? (
           <button className="rounded-2xl bg-indigo-600 px-5 py-3 font-semibold text-white" onClick={startGame}>
@@ -1289,11 +1268,11 @@ function LobbyView({
 
       {error ? <InlineError message={error} /> : null}
 
-      <div className="rounded-[24px] bg-slate-50 p-4">
-        <label className="flex items-center gap-3 text-sm font-semibold text-slate-700">
+      <div className="rounded-[24px] bg-slate-50 dark:bg-slate-950 p-4">
+        <label className="flex items-center gap-3 text-sm font-semibold text-slate-700 dark:text-slate-200">
           <input
             type="checkbox"
-            className="h-5 w-5 rounded border-slate-300 text-indigo-600"
+            className="h-5 w-5 rounded border-slate-300 dark:border-slate-600 text-indigo-600"
             checked={view.options.showLegalMoves}
             disabled={!isHost}
             onChange={(event) => updateRoomOption(event.target.checked)}
@@ -1372,8 +1351,8 @@ function GameView({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-sm font-semibold uppercase tracking-[0.28em] text-indigo-500">Game</p>
-          <h2 className="text-3xl font-bold text-slate-900">Turn {view.game.turn}</h2>
-          <p className="mt-2 text-slate-600">
+          <h2 className="text-3xl font-bold text-slate-900 dark:text-white">Turn {view.game.turn}</h2>
+          <p className="mt-2 text-slate-600 dark:text-slate-300">
             {view.game.players.find((player) => player.id === view.game.currentPlayerId)?.name ?? "Waiting"}
             {view.paused ? " · Paused" : ""}
           </p>
@@ -1387,14 +1366,14 @@ function GameView({
             Play
           </button>
           <button
-            className="rounded-2xl bg-slate-200 px-4 py-3 font-semibold text-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-2xl bg-slate-200 dark:bg-slate-700 px-4 py-3 font-semibold text-slate-800 dark:text-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
             onClick={clearDraftMove}
             disabled={tentativePlacements.length === 0}
           >
             Clear
           </button>
           <button
-            className="rounded-2xl bg-slate-200 px-4 py-3 font-semibold text-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-2xl bg-slate-200 dark:bg-slate-700 px-4 py-3 font-semibold text-slate-800 dark:text-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
             onClick={passTurn}
             disabled={!myTurn}
           >
@@ -1405,7 +1384,7 @@ function GameView({
 
       {error ? <InlineError message={error} /> : null}
 
-      <div className="rounded-[28px] bg-slate-50 p-4">
+      <div className="rounded-[28px] bg-slate-50 dark:bg-slate-950 p-4">
         <BoardGrid
           board={view.game.board}
           tentativePlacements={tentativePlacements}
@@ -1418,16 +1397,16 @@ function GameView({
         />
       </div>
 
-      <div className="rounded-[28px] bg-slate-50 p-4">
+      <div className="rounded-[28px] bg-slate-50 dark:bg-slate-950 p-4">
         <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h3 className="text-xl font-bold text-slate-900">Rack</h3>
-            <p className="text-sm text-slate-500">Drag and drop tiles to think visually. Right-click to prepare an exchange.</p>
+            <h3 className="text-xl font-bold text-slate-900 dark:text-white">Rack</h3>
+            <p className="text-sm text-slate-500 dark:text-slate-400">Drag and drop tiles to think visually. Right-click to prepare an exchange.</p>
           </div>
           <div className="flex flex-wrap gap-2">
             {showLegalMovesFeature ? (
               <button
-                className="rounded-2xl bg-white px-4 py-3 font-semibold text-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-2xl bg-white dark:bg-slate-900 px-4 py-3 font-semibold text-slate-800 dark:text-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
                 onClick={toggleLegalMovesPanel}
                 disabled={!myTurn}
               >
@@ -1435,7 +1414,7 @@ function GameView({
               </button>
             ) : null}
             <button
-              className="rounded-2xl bg-white px-4 py-3 font-semibold text-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+              className="rounded-2xl bg-white dark:bg-slate-900 px-4 py-3 font-semibold text-slate-800 dark:text-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
               onClick={exchangeTiles}
               disabled={!myTurn || exchangeSelection.length === 0}
             >
@@ -1483,13 +1462,13 @@ function GameView({
       </div>
 
       {showLegalMovesFeature && showLegalMovesPanel ? (
-        <section className="rounded-[28px] bg-slate-50 p-4">
+        <section className="rounded-[28px] bg-slate-50 dark:bg-slate-950 p-4">
           <div className="mb-3 flex items-center justify-between gap-3">
             <div>
-              <h3 className="text-xl font-bold text-slate-900">Legal moves</h3>
-              <p className="text-sm text-slate-500">Compact grid. Click a card to prepare the move.</p>
+              <h3 className="text-xl font-bold text-slate-900 dark:text-white">Legal moves</h3>
+              <p className="text-sm text-slate-500 dark:text-slate-400">Compact grid. Click a card to prepare the move.</p>
             </div>
-            <button className="rounded-2xl bg-white px-4 py-3 font-semibold text-slate-800" onClick={requestLegalMoves} disabled={!myTurn}>
+            <button className="rounded-2xl bg-white dark:bg-slate-900 px-4 py-3 font-semibold text-slate-800 dark:text-slate-200" onClick={requestLegalMoves} disabled={!myTurn}>
               Refresh
             </button>
           </div>
@@ -1540,14 +1519,14 @@ function ConversationPanel({
   onSendChat: () => void;
 }) {
   return (
-    <aside className="min-w-0 flex min-h-0 flex-col overflow-hidden rounded-[28px] bg-white p-4 shadow-xl shadow-slate-200/80">
+    <aside className="min-w-0 flex min-h-0 flex-col overflow-hidden rounded-[28px] bg-white dark:bg-slate-900 p-4 shadow-xl shadow-slate-200/80 dark:shadow-slate-900/50">
       <div className="mb-4 flex items-center justify-between gap-3">
         <div>
-          <p className="text-sm font-semibold uppercase tracking-[0.28em] text-slate-400">Conversation</p>
-          <h2 className="text-2xl font-bold text-slate-900">Agent conversation</h2>
+          <p className="text-sm font-semibold uppercase tracking-[0.28em] text-slate-400 dark:text-slate-500">Conversation</p>
+          <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Agent conversation</h2>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button className="rounded-2xl bg-slate-100 px-4 py-3 text-sm font-semibold text-slate-700" onClick={onCycleMode}>
+          <button className="rounded-2xl bg-slate-100 dark:bg-slate-800 px-4 py-3 text-sm font-semibold text-slate-700 dark:text-slate-200" onClick={onCycleMode}>
             Mode: {modeLabel(mode)}
           </button>
           <button
@@ -1560,7 +1539,7 @@ function ConversationPanel({
         </div>
       </div>
 
-      <div ref={feedRef} className="min-w-0 min-h-0 flex-1 overflow-y-auto overflow-x-hidden rounded-[24px] bg-slate-50 p-3">
+      <div ref={feedRef} className="min-w-0 min-h-0 flex-1 overflow-y-auto overflow-x-hidden rounded-[24px] bg-slate-50 dark:bg-slate-950 p-3">
         <div className="grid gap-3">
           {items.map((item) =>
             item.type === "chat" ? (
@@ -1582,13 +1561,13 @@ function ConversationPanel({
               />
             )
           )}
-          {items.length === 0 ? <div className="rounded-[20px] bg-white px-4 py-3 text-sm text-slate-500">No messages yet.</div> : null}
+          {items.length === 0 ? <div className="rounded-[20px] bg-white dark:bg-slate-900 px-4 py-3 text-sm text-slate-500 dark:text-slate-400">No messages yet.</div> : null}
         </div>
       </div>
 
       <div className="mt-4 grid gap-3">
         <input
-          className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none transition focus:border-indigo-500"
+          className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-4 py-3 outline-none transition focus:border-indigo-500"
           value={chatDraft}
           onChange={(event) => setChatDraft(event.target.value)}
           onKeyDown={(event) => {
@@ -1610,18 +1589,18 @@ function LeaderboardCard({ player }: { player: PlayerSeat }) {
   return (
     <div
       className={`rounded-[24px] border p-4 ${
-        player.isCurrentTurn ? "border-indigo-400 bg-indigo-50" : "border-slate-200 bg-slate-50"
+        player.isCurrentTurn ? "border-indigo-400 dark:border-indigo-600 bg-indigo-50 dark:bg-indigo-900/20" : "border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950"
       }`}
     >
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <ModelLogo seat={player} size="lg" />
           <div>
-            <p className="font-bold text-slate-900">{player.name}</p>
-            <p className="text-sm text-slate-500">{player.kind === "agent" ? "Agent" : "Human"}</p>
+            <p className="font-bold text-slate-900 dark:text-white">{player.name}</p>
+            <p className="text-sm text-slate-500 dark:text-slate-400">{player.kind === "agent" ? "Agent" : "Human"}</p>
           </div>
         </div>
-        <p className="text-3xl font-black text-slate-900">{player.score}</p>
+        <p className="text-3xl font-black text-slate-900 dark:text-white">{player.score}</p>
       </div>
     </div>
   );
@@ -1639,29 +1618,29 @@ function RoomCard({
   onDelete: (() => void) | null;
 }) {
   return (
-    <div className="grid gap-4 rounded-[24px] bg-slate-50 p-5">
+    <div className="grid gap-4 rounded-[24px] bg-slate-50 dark:bg-slate-950 p-5">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <p className="text-sm font-semibold uppercase tracking-[0.28em] text-slate-400">Room</p>
-          <h3 className="text-2xl font-bold text-slate-900">{room.roomId}</h3>
+          <p className="text-sm font-semibold uppercase tracking-[0.28em] text-slate-400 dark:text-slate-500">Room</p>
+          <h3 className="text-2xl font-bold text-slate-900 dark:text-white">{room.roomId}</h3>
         </div>
         <span className={`rounded-full px-3 py-1 text-sm font-semibold ${roomStatusBadge(room.status)}`}>{roomStatusLabel(room.status)}</span>
       </div>
       <div className="grid gap-2">
         {room.seatSummaries.filter((seat) => seat.enabled).map((seat) => (
-          <div key={seat.id} className="flex items-center justify-between rounded-2xl bg-white px-4 py-3">
+          <div key={seat.id} className="flex items-center justify-between rounded-2xl bg-white dark:bg-slate-900 px-4 py-3">
             <div className="flex items-center gap-3">
               <ModelLogo seat={seat} size="sm" />
               <div>
-                <p className="font-semibold text-slate-900">{seat.name}</p>
-                <p className="text-sm text-slate-500">{seat.kind === "agent" ? "Agent" : "Human"}</p>
+                <p className="font-semibold text-slate-900 dark:text-white">{seat.name}</p>
+                <p className="text-sm text-slate-500 dark:text-slate-400">{seat.kind === "agent" ? "Agent" : "Human"}</p>
               </div>
             </div>
-            <span className="text-sm font-semibold text-slate-500">{seat.score}</span>
+            <span className="text-sm font-semibold text-slate-500 dark:text-slate-400">{seat.score}</span>
           </div>
         ))}
       </div>
-      <div className="flex items-center justify-between gap-3 text-sm text-slate-500">
+      <div className="flex items-center justify-between gap-3 text-sm text-slate-500 dark:text-slate-400">
         <span>{room.spectatorCount} spectator(s)</span>
         <span>{room.currentTurnPlayerName ? `To ${room.currentTurnPlayerName}` : "Waiting"}</span>
       </div>
@@ -1670,12 +1649,12 @@ function RoomCard({
           Watch
         </button>
         {onDelete ? (
-          <button className="rounded-2xl bg-red-100 px-4 py-3 font-semibold text-red-700" onClick={onDelete}>
+          <button className="rounded-2xl bg-red-100 dark:bg-red-900/30 px-4 py-3 font-semibold text-red-700 dark:text-red-400" onClick={onDelete}>
             Delete
           </button>
         ) : null}
         {onJoin ? (
-          <button className="rounded-2xl bg-slate-200 px-4 py-3 font-semibold text-slate-800" onClick={onJoin}>
+          <button className="rounded-2xl bg-slate-200 dark:bg-slate-700 px-4 py-3 font-semibold text-slate-800 dark:text-slate-200 hover:bg-slate-300 dark:hover:bg-slate-600 transition" onClick={onJoin}>
             Join
           </button>
         ) : null}
@@ -1741,12 +1720,12 @@ function BoardGrid({
               }}
             >
               {tile ? (
-                <span className="flex h-full flex-col items-center justify-center rounded-md bg-amber-200 px-0.5 text-slate-900 shadow-inner">
+                <span className="flex h-full flex-col items-center justify-center rounded-md bg-amber-200 dark:bg-amber-800/50 px-0.5 text-slate-900 dark:text-white shadow-inner">
                   <span className="text-[13px] font-bold md:text-sm">{tile.blank ? tile.assignedLetter : tile.letter}</span>
                   <span className="text-[9px] leading-none">{tile.value}</span>
                 </span>
               ) : (
-                <span className="flex h-full items-center justify-center text-[8px] uppercase tracking-[0.08em] text-slate-700">
+                <span className="flex h-full items-center justify-center text-[8px] uppercase tracking-[0.08em] text-slate-700 dark:text-slate-200">
                   {labelBonus(cell.bonus)}
                 </span>
               )}
@@ -1794,9 +1773,9 @@ function RackTile({
         onToggleExchange();
       }}
       disabled={disabled}
-      className={`min-h-[78px] rounded-[18px] border px-2 py-2 text-slate-900 shadow-sm transition ${
-        selected ? "border-indigo-500 ring-2 ring-indigo-500" : "border-amber-300"
-      } ${exchange ? "bg-orange-200" : "bg-gradient-to-b from-amber-100 to-amber-300"} ${
+      className={`min-h-[78px] rounded-[18px] border px-2 py-2 text-slate-900 dark:text-white shadow-sm transition ${
+        selected ? "border-indigo-500 ring-2 ring-indigo-500" : "border-amber-300 dark:border-amber-700"
+      } ${exchange ? "bg-orange-200 dark:bg-orange-800/50" : "bg-gradient-to-b from-amber-100 to-amber-300 dark:from-amber-900/40 dark:to-amber-800/60"} ${
         disabled ? "cursor-not-allowed opacity-50" : "hover:-translate-y-0.5"
       }`}
     >
@@ -1825,7 +1804,8 @@ function SeatEditor({
   const [draftName, setDraftName] = useState(seat.name);
   const [draftModel, setDraftModel] = useState(seat.agentConfig?.model ?? "local-model");
   const [draftBaseUrl, setDraftBaseUrl] = useState(seat.agentConfig?.baseUrl ?? "");
-  const [draftApiKey, setDraftApiKey] = useState(seat.agentConfig?.apiKey ?? "");
+  const [draftApiKey, setDraftApiKey] = useState("");
+  const [draftApiKeyDirty, setDraftApiKeyDirty] = useState(false);
   const [draftSystemPrompt, setDraftSystemPrompt] = useState(seat.agentConfig?.systemPrompt ?? defaultPromptForSeat);
   const agentConfig = seat.agentConfig ?? {
     provider: "openai_compatible",
@@ -1839,25 +1819,26 @@ function SeatEditor({
     setDraftName(seat.name);
     setDraftModel(seat.agentConfig?.model ?? "local-model");
     setDraftBaseUrl(seat.agentConfig?.baseUrl ?? "");
-    setDraftApiKey(seat.agentConfig?.apiKey ?? "");
+    setDraftApiKey("");
+    setDraftApiKeyDirty(false);
     setDraftSystemPrompt(seat.agentConfig?.systemPrompt ?? defaultPromptForSeat);
-  }, [defaultPromptForSeat, seat.id, seat.name, seat.agentConfig?.provider, seat.agentConfig?.model, seat.agentConfig?.baseUrl, seat.agentConfig?.apiKey, seat.agentConfig?.systemPrompt]);
+  }, [defaultPromptForSeat, seat.id, seat.name, seat.agentConfig?.provider, seat.agentConfig?.model, seat.agentConfig?.baseUrl, seat.agentConfig?.systemPrompt, seat.agentConfig?.useSavedApiKey, seat.agentConfig?.hasCustomApiKey]);
 
   return (
-    <div className={`grid gap-3 rounded-[24px] border p-4 ${seat.enabled ? "border-slate-200 bg-slate-50" : "border-slate-200 bg-slate-100/70 opacity-60"}`}>
+    <div className={`grid gap-3 rounded-[24px] border p-4 ${seat.enabled ? "border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950" : "border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800/70 opacity-60"}`}>
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <ModelLogo seat={seat} size="lg" />
           <div>
-            <strong className="block text-lg text-slate-900">Seat {seat.seatIndex + 1}</strong>
-            <p className="text-sm text-slate-500">{seat.kind === "agent" ? "AI agent" : "Human player"}</p>
+            <strong className="block text-lg text-slate-900 dark:text-white">Seat {seat.seatIndex + 1}</strong>
+            <p className="text-sm text-slate-500 dark:text-slate-400">{seat.kind === "agent" ? "AI agent" : "Human player"}</p>
           </div>
         </div>
-        <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+        <label className="flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
           Active
           <input
             type="checkbox"
-            className="h-5 w-5 rounded border-slate-300 text-indigo-600"
+            className="h-5 w-5 rounded border-slate-300 dark:border-slate-600 text-indigo-600"
             checked={seat.enabled}
             disabled={disabled}
             onChange={(event) => onChange(seat, { enabled: event.target.checked })}
@@ -1865,10 +1846,10 @@ function SeatEditor({
         </label>
       </div>
 
-      <label className="grid gap-2 text-sm font-semibold text-slate-700">
+      <label className="grid gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
         Type
         <select
-          className="rounded-2xl border border-slate-200 bg-white px-4 py-3"
+          className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-3"
           value={seat.kind}
           disabled={disabled}
           onChange={(event) => onChange(seat, { kind: event.target.value as PlayerSeat["kind"] })}
@@ -1878,10 +1859,10 @@ function SeatEditor({
         </select>
       </label>
 
-      <label className="grid gap-2 text-sm font-semibold text-slate-700">
+      <label className="grid gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
         Name
         <input
-          className="rounded-2xl border border-slate-200 bg-white px-4 py-3"
+          className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-3"
           value={draftName}
           disabled={disabled}
           onChange={(event) => setDraftName(event.target.value)}
@@ -1895,24 +1876,27 @@ function SeatEditor({
 
       {seat.kind === "agent" ? (
         <>
-          <label className="grid gap-2 text-sm font-semibold text-slate-700">
+          <label className="grid gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
             Provider
             <select
-              className="rounded-2xl border border-slate-200 bg-white px-4 py-3"
+              className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-3"
               value={agentConfig.provider}
               disabled={disabled}
               onChange={(event) => {
                 const nextProvider = event.target.value as AgentConfig["provider"];
                 const nextBaseUrl = defaultBaseUrlForProvider(nextProvider);
-                const nextApiKey = defaultApiKeys[nextProvider] ?? "";
+                const nextUseSavedApiKey = Boolean(defaultApiKeys[nextProvider]);
                 setDraftBaseUrl(nextBaseUrl);
-                setDraftApiKey(nextApiKey);
+                setDraftApiKey("");
+                setDraftApiKeyDirty(false);
                 onChange(seat, {
                   agentConfig: {
                     ...agentConfig,
                     provider: nextProvider,
                     baseUrl: nextBaseUrl,
-                    apiKey: nextApiKey,
+                    apiKey: undefined,
+                    useSavedApiKey: nextUseSavedApiKey,
+                    hasCustomApiKey: false,
                     systemPrompt: agentConfig.systemPrompt ?? defaultPromptForSeat
                   }
                 });
@@ -1925,10 +1909,10 @@ function SeatEditor({
             </select>
           </label>
 
-          <label className="grid gap-2 text-sm font-semibold text-slate-700">
+          <label className="grid gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
             Model
             <input
-              className="rounded-2xl border border-slate-200 bg-white px-4 py-3"
+              className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-3"
               value={draftModel}
               disabled={disabled}
               onChange={(event) => setDraftModel(event.target.value)}
@@ -1940,10 +1924,10 @@ function SeatEditor({
             />
           </label>
 
-          <label className="flex items-center gap-3 text-sm font-semibold text-slate-700">
+          <label className="flex items-center gap-3 text-sm font-semibold text-slate-700 dark:text-slate-200">
             <input
               type="checkbox"
-              className="h-5 w-5 rounded border-slate-300 text-indigo-600"
+              className="h-5 w-5 rounded border-slate-300 dark:border-slate-600 text-indigo-600"
               checked={Boolean(agentConfig.allowLegalMoves)}
               disabled={disabled}
               onChange={(event) => {
@@ -1960,10 +1944,10 @@ function SeatEditor({
             Allow this agent to request legal moves
           </label>
 
-          <label className="grid gap-2 text-sm font-semibold text-slate-700">
+          <label className="grid gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
             Base URL
             <input
-              className="rounded-2xl border border-slate-200 bg-white px-4 py-3"
+              className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-3"
               value={draftBaseUrl}
               disabled={disabled}
               onChange={(event) => setDraftBaseUrl(event.target.value)}
@@ -1975,28 +1959,54 @@ function SeatEditor({
             />
           </label>
 
-          <label className="grid gap-2 text-sm font-semibold text-slate-700">
+          <label className="grid gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
             API key
             <input
-              className="rounded-2xl border border-slate-200 bg-white px-4 py-3"
+              className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-3"
               value={draftApiKey}
               disabled={disabled}
-              onChange={(event) => setDraftApiKey(event.target.value)}
+              placeholder={
+                agentConfig.useSavedApiKey
+                  ? "Default used"
+                  : agentConfig.hasCustomApiKey
+                    ? "Custom key saved"
+                    : "Enter API key"
+              }
+              onChange={(event) => {
+                setDraftApiKey(event.target.value);
+                setDraftApiKeyDirty(true);
+              }}
               onBlur={() => {
-                if (draftApiKey !== (agentConfig.apiKey ?? "")) {
-                  onChange(seat, { agentConfig: { ...agentConfig, apiKey: draftApiKey, systemPrompt: agentConfig.systemPrompt ?? defaultPromptForSeat } });
-                  if (draftApiKey.trim() && window.confirm(`Use this API key as the default for ${agentConfig.provider}?`)) {
-                    onSaveDefaultApiKey(agentConfig.provider, draftApiKey.trim());
-                  }
+                if (!draftApiKeyDirty) {
+                  return;
                 }
+                const nextApiKey = draftApiKey.trim();
+                const nextUseSavedApiKey = !nextApiKey && Boolean(defaultApiKeys[agentConfig.provider]);
+                onChange(seat, {
+                  agentConfig: {
+                    ...agentConfig,
+                    apiKey: nextApiKey || undefined,
+                    useSavedApiKey: nextUseSavedApiKey,
+                    hasCustomApiKey: Boolean(nextApiKey),
+                    systemPrompt: agentConfig.systemPrompt ?? defaultPromptForSeat
+                  }
+                });
+                if (nextApiKey && window.confirm(`Use this API key as the default for ${agentConfig.provider}?`)) {
+                  onSaveDefaultApiKey(agentConfig.provider, nextApiKey);
+                }
+                setDraftApiKey("");
+                setDraftApiKeyDirty(false);
               }}
             />
+            {agentConfig.useSavedApiKey ? (
+              <span className="text-xs font-medium text-slate-500 dark:text-slate-400">The saved default key for this provider will be used on the server.</span>
+            ) : null}
           </label>
 
-          <label className="grid gap-2 text-sm font-semibold text-slate-700">
+          <label className="grid gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
             System prompt
             <textarea
-              className="min-h-[120px] rounded-2xl border border-slate-200 bg-white px-4 py-3"
+              className="min-h-[120px] rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-3"
               value={draftSystemPrompt}
               disabled={disabled}
               onChange={(event) => setDraftSystemPrompt(event.target.value)}
@@ -2038,9 +2048,9 @@ function ConversationTraceCard({
           <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
             <div>
               <div className="flex flex-wrap items-center gap-2">
-                <p className="text-sm font-bold text-slate-900">{trace.playerName}</p>
+                <p className="text-sm font-bold text-slate-900 dark:text-white">{trace.playerName}</p>
                 {showFallbackStats ? (
-                  <span className="rounded-full bg-slate-900/8 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">
+                  <span className="rounded-full bg-slate-900/8 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600 dark:text-slate-300">
                     {`fail: ${trace.fallbackCount}/${trace.turnCount}`}
                   </span>
                 ) : null}
@@ -2065,8 +2075,8 @@ function ConversationTraceCard({
             {event.content || "(vide)"}
           </div>
           {showRack ? (
-            <div className="mt-3 rounded-[16px] bg-white/60 p-3">
-              <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Rack</p>
+            <div className="mt-3 rounded-[16px] bg-white dark:bg-slate-900/60 p-3">
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Rack</p>
               <SmallRack rack={rack ?? []} />
             </div>
           ) : null}
@@ -2094,10 +2104,10 @@ function ChatRow({
       <ModelLogo seat={seat} trace={trace} name={message.authorName} size="sm" />
       <div
         className={`max-w-[85%] rounded-[22px] px-4 py-3 shadow-sm ${
-          outgoing ? "rounded-tl-none bg-indigo-600 text-white" : "rounded-tr-none bg-white text-slate-800"
+          outgoing ? "rounded-tl-none bg-indigo-600 text-white" : "rounded-tr-none bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200"
         }`}
       >
-        <p className={`text-xs font-bold ${outgoing ? "text-indigo-100" : "text-slate-400"}`}>{message.authorName}</p>
+        <p className={`text-xs font-bold ${outgoing ? "text-indigo-100" : "text-slate-400 dark:text-slate-500"}`}>{message.authorName}</p>
         <p className="mt-1 text-sm leading-6 whitespace-pre-wrap break-words">{message.text}</p>
       </div>
     </div>
@@ -2110,7 +2120,7 @@ function SmallRack({ rack }: { rack: Tile[] }) {
       {rack.map((tile) => (
         <div
           key={tile.id}
-          className="flex h-9 w-9 flex-col items-center justify-center rounded-lg border border-amber-300 bg-amber-100 text-slate-900 shadow-sm"
+          className="flex h-9 w-9 flex-col items-center justify-center rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-100 dark:bg-amber-900/30 text-slate-900 dark:text-white shadow-sm"
         >
           <span className="text-xs font-bold leading-none">{tile.blank ? tile.assignedLetter || "?" : tile.letter}</span>
           <span className="text-[8px] leading-none">{tile.value}</span>
@@ -2135,14 +2145,14 @@ function ModelLogo({
   const model = "agentConfig" in (seat ?? {}) ? seat?.agentConfig?.model : trace?.model;
   const provider = "agentConfig" in (seat ?? {}) ? seat?.agentConfig?.provider : trace?.provider;
   const resolvedName = seat?.name ?? trace?.playerName ?? name ?? "Agent";
-  const className = `${size === "lg" ? "h-12 w-12" : "h-10 w-10"} rounded-2xl border border-slate-200 bg-white p-1 object-contain`;
+  const className = `${size === "lg" ? "h-12 w-12" : "h-10 w-10"} rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-1 object-contain`;
   if (resolvedName.trim().toLowerCase() === "system") {
-    return <img src="/logos/System.png" alt="System" className={className} />;
+    return <img src="/logos/system.png" alt="System" className={className} />;
   }
   if (kind === "human") {
     return (
       <div className={`${className} flex items-center justify-center`}>
-        <svg viewBox="0 0 24 24" aria-hidden="true" className="h-full w-full text-slate-700">
+        <svg viewBox="0 0 24 24" aria-hidden="true" className="h-full w-full text-slate-700 dark:text-slate-200">
           <circle cx="12" cy="8" r="4" fill="currentColor" />
           <path
             d="M6 20c0-3.3137 2.6863-6 6-6s6 2.6863 6 6"
@@ -2168,30 +2178,30 @@ function LegalMoveCard({ move, onApply }: { move: LegalMove; onApply: () => void
 
   return (
     <button
-      className="grid gap-3 rounded-[24px] bg-white p-4 text-left transition hover:-translate-y-0.5 hover:shadow-md"
+      className="grid gap-3 rounded-[24px] bg-white dark:bg-slate-900 p-4 text-left transition hover:-translate-y-0.5 hover:shadow-md"
       onClick={onApply}
     >
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-lg font-bold text-slate-900">{move.formedWords.join(", ")}</p>
-          <p className="text-xs text-slate-500">
+          <p className="text-lg font-bold text-slate-900 dark:text-white">{move.formedWords.join(", ")}</p>
+          <p className="text-xs text-slate-500 dark:text-slate-400">
             {anchor ? `row ${anchor.row}, col ${anchor.col}` : ""} · {isHorizontal ? "horizontal" : "vertical"}
           </p>
         </div>
-        <span className="rounded-full bg-indigo-100 px-3 py-1 text-sm font-bold text-indigo-700">{move.score}</span>
+        <span className="rounded-full bg-indigo-100 dark:bg-indigo-900/30 px-3 py-1 text-sm font-bold text-indigo-700 dark:text-indigo-400">{move.score}</span>
       </div>
       <div className="flex flex-wrap items-start gap-3">
-        <div className={`flex rounded-[18px] bg-slate-100 p-2 ${isHorizontal ? "flex-row gap-1" : "flex-col gap-1"}`}>
+        <div className={`flex rounded-[18px] bg-slate-100 dark:bg-slate-800 p-2 ${isHorizontal ? "flex-row gap-1" : "flex-col gap-1"}`}>
           {orderedPlacements.map((placement) => (
             <div
               key={`${placement.row}-${placement.col}`}
-              className="flex h-10 w-10 items-center justify-center rounded-xl bg-white text-sm font-bold text-slate-700 shadow-sm"
+              className="flex h-10 w-10 items-center justify-center rounded-xl bg-white dark:bg-slate-900 text-sm font-bold text-slate-700 dark:text-slate-200 shadow-sm"
             >
               {placement.letter ?? "?"}
             </div>
           ))}
         </div>
-        <div className="grid content-start gap-1 text-[11px] text-slate-500">
+        <div className="grid content-start gap-1 text-[11px] text-slate-500 dark:text-slate-400">
           <span>{move.summary}</span>
           <span>{move.placements.length} tile(s)</span>
         </div>
@@ -2201,20 +2211,18 @@ function LegalMoveCard({ move, onApply }: { move: LegalMove; onApply: () => void
 }
 
 function InlineError({ message }: { message: string }) {
-  return <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">{message}</div>;
+  return <div className="rounded-2xl border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 px-4 py-3 text-sm font-medium text-red-700 dark:text-red-400">{message}</div>;
 }
 
 function ensureSocketReady(
   socket: ClientSocket,
   clientId: string,
   displayName: string,
-  authToken: string,
   callback?: () => void
 ) {
   socket.auth = {
     clientId,
-    displayName,
-    authToken
+    displayName
   };
   if (socket.connected) {
     callback?.();
@@ -2249,8 +2257,19 @@ function getOrCreateClientId(): string {
   return next;
 }
 
-function authHeaders(authToken: string): Record<string, string> {
-  return authToken ? { Authorization: `Bearer ${authToken}` } : {};
+function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  return fetch(`${API_BASE_URL}${path}`, {
+    ...init,
+    credentials: "include"
+  });
+}
+
+function sanitizeAgentConfigForClientView(agentConfig: AgentConfig): AgentConfig {
+  return {
+    ...agentConfig,
+    apiKey: "",
+    hasCustomApiKey: Boolean(agentConfig.apiKey?.trim()) || Boolean(agentConfig.hasCustomApiKey)
+  };
 }
 
 function defaultBaseUrlForProvider(provider: AgentConfig["provider"]): string {
@@ -2270,15 +2289,15 @@ function defaultBaseUrlForProvider(provider: AgentConfig["provider"]): string {
 function bonusClasses(bonus: BoardCell["bonus"]): string {
   switch (bonus) {
     case "dl":
-      return "border-cyan-200 bg-cyan-100";
+      return "border-cyan-200 dark:border-cyan-700 bg-cyan-100 dark:bg-cyan-900/30";
     case "tl":
-      return "border-cyan-300 bg-cyan-300";
+      return "border-cyan-300 dark:border-cyan-600 bg-cyan-300 dark:bg-cyan-700/50";
     case "dw":
-      return "border-orange-200 bg-orange-100";
+      return "border-orange-200 dark:border-orange-700 bg-orange-100 dark:bg-orange-900/30";
     case "tw":
       return "border-orange-300 bg-orange-300";
     case "center":
-      return "border-orange-300 bg-orange-200";
+      return "border-orange-300 bg-orange-200 dark:bg-orange-800/50";
     default:
       return "border-amber-100 bg-amber-50";
   }
@@ -2303,19 +2322,19 @@ function labelBonus(bonus: BoardCell["bonus"]): string {
 
 function getModelLogo({ model, provider, name }: { model?: string; provider?: AgentProvider; name?: string }): string {
   const key = `${model ?? ""} ${provider ?? ""} ${name ?? ""}`.toLowerCase();
-  if (key.includes("glm")) return "/logos/z-ai-logo.png";
-  if (key.includes("qwen")) return "/logos/qwen-logo.png";
+  if (key.includes("glm")) return "/logos/z_ai_logo.png";
+  if (key.includes("qwen")) return "/logos/qwen_logo.png";
   if (key.includes("kimi") || key.includes("moonshot")) return "/logos/kimi_logo.png";
-  if (key.includes("nemotron") || key.includes("nvidia")) return "/logos/nvidia-logo.png";
-  if (key.includes("llama") || key.includes("meta")) return "/logos/meta-logo.png";
-  if (key.includes("mimo") || key.includes("xiaomi")) return "/logos/xiaomi-mimo-logo.png";
-  if (key.includes("gpt") || key.includes("openai")) return "/logos/openai-Logo.png";
-  if (key.includes("claude") || key.includes("anthropic")) return "/logos/claude-logo.png";
-  if (key.includes("gemini") || key.includes("google")) return "/logos/Gemini-logo.png";
+  if (key.includes("nemotron") || key.includes("nvidia")) return "/logos/nvidia_logo.png";
+  if (key.includes("llama") || key.includes("meta")) return "/logos/meta_logo.png";
+  if (key.includes("mimo") || key.includes("xiaomi")) return "/logos/xiaomi_mimo_logo.png";
+  if (key.includes("gpt") || key.includes("openai")) return "/logos/openai_logo.png";
+  if (key.includes("claude") || key.includes("anthropic")) return "/logos/claude_logo.png";
+  if (key.includes("gemini") || key.includes("google")) return "/logos/gemini_logo.png";
   if (key.includes("deepseek")) return "/logos/deepseek_logo.png";
   if (key.includes("grok") || key.includes("xai")) return "/logos/grok_logo.png";
-  if (key.includes("minimax")) return "/logos/MiniMax_logo.png";
-  return "/logos/z-ai-logo.png";
+  if (key.includes("minimax")) return "/logos/minimax_logo.png";
+  return "/logos/z_ai_logo.png";
 }
 
 function getActiveTracePlayerId(traces: AgentTrace[]): string | null {
@@ -2457,14 +2476,14 @@ function roomStatusLabel(status: RoomSummary["status"] | RoomView["status"]): st
 function roomStatusBadge(status: RoomSummary["status"]): string {
   switch (status) {
     case "lobby":
-      return "bg-slate-100 text-slate-700";
+      return "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200";
     case "paused":
-      return "bg-amber-100 text-amber-700";
+      return "bg-amber-100 dark:bg-amber-900/30 text-amber-700";
     case "finished":
       return "bg-emerald-100 text-emerald-700";
     case "live":
     default:
-      return "bg-indigo-100 text-indigo-700";
+      return "bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400";
   }
 }
 
@@ -2486,26 +2505,26 @@ function traceEventClasses(event: AgentTraceEvent): { card: string; badge: strin
 
   switch (event.kind) {
     case "tool_call":
-      return { card: "border-cyan-200 bg-cyan-50", badge: "bg-cyan-100 text-cyan-800", content: "text-cyan-950" };
+      return { card: "border-cyan-200 dark:border-cyan-700 bg-cyan-50", badge: "bg-cyan-100 dark:bg-cyan-900/30 text-cyan-800", content: "text-cyan-950" };
     case "tool_result":
       if (isError) {
-        return { card: "border-red-200 bg-red-50", badge: "bg-red-100 text-red-700", content: "text-red-900" };
+        return { card: "border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20", badge: "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400", content: "text-red-900" };
       }
       if (isSuccess) {
         return { card: "border-emerald-200 bg-emerald-50", badge: "bg-emerald-100 text-emerald-700", content: "text-emerald-950" };
       }
-      return { card: "border-amber-200 bg-amber-50", badge: "bg-amber-100 text-amber-700", content: "text-amber-950" };
+      return { card: "border-amber-200 bg-amber-50", badge: "bg-amber-100 dark:bg-amber-900/30 text-amber-700", content: "text-amber-950" };
     case "reasoning":
       return { card: "border-violet-200 bg-violet-50", badge: "bg-violet-100 text-violet-700", content: "text-violet-950" };
     case "provider_reply":
-      return { card: "border-slate-200 bg-white", badge: "bg-slate-100 text-slate-600", content: "text-slate-700" };
+      return { card: "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900", badge: "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300", content: "text-slate-700 dark:text-slate-200" };
     case "status":
       return {
-        card: isError ? "border-orange-200 bg-orange-50" : "border-slate-200 bg-slate-50",
-        badge: isError ? "bg-orange-100 text-orange-700" : "bg-slate-100 text-slate-600",
-        content: isError ? "text-orange-950" : "text-slate-700"
+        card: isError ? "border-orange-200 dark:border-orange-700 bg-orange-50" : "border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950",
+        badge: isError ? "bg-orange-100 dark:bg-orange-900/30 text-orange-700" : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300",
+        content: isError ? "text-orange-950" : "text-slate-700 dark:text-slate-200"
       };
     default:
-      return { card: "border-slate-200 bg-white", badge: "bg-slate-100 text-slate-600", content: "text-slate-700" };
+      return { card: "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900", badge: "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300", content: "text-slate-700 dark:text-slate-200" };
   }
 }

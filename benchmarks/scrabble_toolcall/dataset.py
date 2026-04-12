@@ -42,12 +42,12 @@ def generate_dataset_via_ts(
     medium: int = 200,
     hard: int = 100,
     seed: int = 1,
-    dictionary: str = "public/dictionary/en-large.txt",
+    dictionary: str = "public/dictionary/en_large.txt",
 ) -> None:
     root = Path(__file__).resolve().parents[2]
     command = [
         str(root / "node_modules" / ".bin" / "tsx"),
-        "src/bench/engine-cli.ts",
+        "src/bench/engine_cli.ts",
         "generate-dataset",
         "--out",
         str(out),

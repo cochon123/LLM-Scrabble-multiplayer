@@ -1,5 +1,5 @@
 import { nanoid } from "nanoid";
-import { resolveAgentSystemPrompt } from "../shared/agent-prompt.js";
+import { resolveAgentSystemPrompt } from "../shared/agent_prompt.js";
 import { ScrabbleGame } from "../shared/game.js";
 import type { AgentConfig, AgentTrace, AgentTraceEvent, ChatMessage, LegalMove, PlacementInput, Tile, TurnLog } from "../shared/types.js";
 

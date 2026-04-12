@@ -5,7 +5,7 @@ import { Dictionary } from "./dictionary";
 
 describe("Dictionary", () => {
   it("rejects the permissive short junk words seen in production", () => {
-    const content = readFileSync(resolve(process.cwd(), "public/dictionary/en-large.txt"), "utf8");
+    const content = readFileSync(resolve(process.cwd(), "public/dictionary/en_large.txt"), "utf8");
     const dictionary = new Dictionary(content);
 
     expect(dictionary.has("APPLE")).toBe(true);

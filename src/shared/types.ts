@@ -6,13 +6,14 @@ export type ViewerRole = "player" | "spectator";
 export type RoomStatus = "lobby" | "live" | "paused" | "finished";
 export type ConversationMode = "user" | "advanced" | "dev";
 export type TraceVisibilityMode = ConversationMode;
-export type DefaultApiKeys = Partial<Record<AgentProvider, string>>;
+export type DefaultApiKeyStatus = Partial<Record<AgentProvider, boolean>>;
+export type StoredDefaultApiKeys = Partial<Record<AgentProvider, string>>;
 
 export interface AuthUserView {
   userId: string;
   nickname: string;
   isAdmin: boolean;
-  defaultApiKeys: DefaultApiKeys;
+  defaultApiKeys: DefaultApiKeyStatus;
 }
 
 export interface Tile {
@@ -74,6 +75,8 @@ export interface AgentConfig {
   model: string;
   baseUrl?: string;
   apiKey?: string;
+  useSavedApiKey?: boolean;
+  hasCustomApiKey?: boolean;
   systemPrompt?: string;
   temperature?: number;
   allowLegalMoves?: boolean;

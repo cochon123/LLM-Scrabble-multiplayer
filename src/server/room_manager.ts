@@ -1,7 +1,7 @@
 import { nanoid } from "nanoid";
 import type { Server, Socket } from "socket.io";
 import { BOARD_SIZE, getBonus } from "../shared/constants.js";
-import { buildDefaultAgentSystemPrompt } from "../shared/agent-prompt.js";
+import { buildDefaultAgentSystemPrompt } from "../shared/agent_prompt.js";
 import { Dictionary } from "../shared/dictionary.js";
 import { ScrabbleGame } from "../shared/game.js";
 import type {
@@ -32,6 +32,7 @@ import type {
 } from "../shared/types.js";
 import { appendRoomLog, getRoomLogPath } from "./logger.js";
 import type { Persistence } from "./persistence.js";
+import { getSessionCookieName, parseCookieHeader } from "./http_security.js";
 import { runAgentTurn, warmUpAgentProvider } from "./ai.js";
 
 type ClientSocket = Socket<ClientToServerEvents, ServerToClientEvents>;
@@ -92,7 +93,7 @@ export class RoomManager {
 
   async attach(socket: ClientSocket): Promise<void> {
     const clientId = String(socket.handshake.auth.clientId || nanoid());
-    const authToken = typeof socket.handshake.auth.authToken === "string" ? socket.handshake.auth.authToken : "";
+    const authToken = parseCookieHeader(socket.handshake.headers.cookie)[getSessionCookieName()] ?? "";
     const authUser = this.persistence?.enabled ? await this.persistence.getUserBySessionToken(authToken) : null;
     if (this.persistence?.enabled && !authUser) {
       socket.emit("error_message", "Please sign in.");
@@ -418,7 +419,7 @@ export class RoomManager {
       if (seat.kind === "agent") {
         seat.ownerClientId = null;
         seat.connected = true;
-        seat.agentConfig = payload.patch.agentConfig || seat.agentConfig || defaultAgentConfig();
+        seat.agentConfig = normalizeAgentConfig(payload.patch.agentConfig || seat.agentConfig || defaultAgentConfig());
       } else {
         seat.connected = Boolean(seat.ownerClientId);
       }
@@ -429,7 +430,7 @@ export class RoomManager {
     }
 
     if (payload.patch.agentConfig) {
-      seat.agentConfig = payload.patch.agentConfig;
+      seat.agentConfig = normalizeAgentConfig(payload.patch.agentConfig);
     }
 
     if (seat.kind === "human" && !seat.ownerClientId && seat.enabled) {
@@ -739,7 +740,8 @@ export class RoomManager {
     await new Promise((resolve) => setTimeout(resolve, 350));
 
     try {
-      const result = await runAgentTurn(currentPlayer.id, currentPlayer.agentConfig, {
+      const resolvedAgentConfig = await this.resolveAgentConfig(room, currentPlayer.agentConfig);
+      const result = await runAgentTurn(currentPlayer.id, resolvedAgentConfig, {
         roomId,
         game: room.game,
         signal: room.agentAbortController.signal,
@@ -1098,8 +1100,12 @@ export class RoomManager {
   private buildRoomView(room: RoomState, clientId: string): RoomView {
     const playerId = this.getRoomPlayerId(room, clientId);
     const viewerRole: ViewerRole = playerId ? "player" : "spectator";
-    const game = room.game
-      ? room.game.getSnapshot(playerId)
+    const snapshot = room.game?.getSnapshot(playerId);
+    const game = snapshot
+      ? {
+          ...snapshot,
+          players: snapshot.players.map((seat) => sanitizeSeatForClient(seat))
+        }
       : {
           id: room.id,
           board: Array.from({ length: BOARD_SIZE }, (_, row) =>
@@ -1111,7 +1117,7 @@ export class RoomManager {
             }))
           ),
           players: room.seats.map((seat) => ({
-            ...seat,
+            ...sanitizeSeatForClient(seat),
             score: 0,
             rackCount: 0,
             rack: playerId === seat.id ? [] : undefined,
@@ -1143,6 +1149,35 @@ export class RoomManager {
         (left, right) =>
           room.seats.findIndex((seat) => seat.id === left.playerId) - room.seats.findIndex((seat) => seat.id === right.playerId)
       )
+    };
+  }
+
+  private async resolveAgentConfig(room: RoomState, agentConfig: PlayerSeat["agentConfig"]): Promise<PlayerSeat["agentConfig"]> {
+    if (!agentConfig) {
+      return agentConfig;
+    }
+
+    const nextConfig = {
+      ...agentConfig,
+      apiKey: agentConfig.apiKey?.trim() || undefined,
+      hasCustomApiKey: undefined
+    };
+
+    if (!agentConfig.useSavedApiKey) {
+      return nextConfig;
+    }
+
+    const hostUserId = this.clients.get(room.hostClientId)?.userId ?? null;
+    if (!hostUserId || !this.persistence?.enabled) {
+      return {
+        ...nextConfig,
+        apiKey: undefined
+      };
+    }
+
+    return {
+      ...nextConfig,
+      apiKey: (await this.persistence.getDefaultApiKey(hostUserId, agentConfig.provider)) ?? undefined
     };
   }
 
@@ -1239,9 +1274,23 @@ function defaultAgentConfig() {
     provider: "openai_compatible" as const,
     model: "local-model",
     baseUrl: "http://127.0.0.1:1234/v1/chat/completions",
+    useSavedApiKey: false,
     systemPrompt: buildDefaultAgentSystemPrompt(false),
     temperature: 0.2,
     allowLegalMoves: false
+  };
+}
+
+function normalizeAgentConfig(agentConfig: PlayerSeat["agentConfig"]): PlayerSeat["agentConfig"] {
+  if (!agentConfig) {
+    return agentConfig;
+  }
+  const trimmedApiKey = agentConfig.apiKey?.trim();
+  return {
+    ...agentConfig,
+    apiKey: trimmedApiKey || undefined,
+    useSavedApiKey: agentConfig.useSavedApiKey && !trimmedApiKey,
+    hasCustomApiKey: undefined
   };
 }
 
@@ -1263,4 +1312,22 @@ function summarizeSeat(seat: PlayerSeat) {
 
 function summarizeSeats(seats: PlayerSeat[]) {
   return seats.map((seat) => summarizeSeat(seat));
+}
+
+function sanitizeSeatForClient(seat: PlayerSeat): PlayerSeat {
+  return {
+    ...seat,
+    agentConfig: sanitizeAgentConfigForClient(seat.agentConfig)
+  };
+}
+
+function sanitizeAgentConfigForClient(agentConfig: PlayerSeat["agentConfig"]): PlayerSeat["agentConfig"] {
+  if (!agentConfig) {
+    return agentConfig;
+  }
+  return {
+    ...agentConfig,
+    apiKey: undefined,
+    hasCustomApiKey: Boolean(agentConfig.apiKey?.trim())
+  };
 }

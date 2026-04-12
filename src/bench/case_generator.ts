@@ -140,7 +140,7 @@ const LETTER_COMMONNESS: Record<string, number> = {
   Z: 1
 };
 
-const DEFAULT_DICTIONARY_PATH = "public/dictionary/en-large.txt";
+const DEFAULT_DICTIONARY_PATH = "public/dictionary/en_large.txt";
 
 export async function generateDataset(options: GenerateDatasetOptions): Promise<BenchmarkCase[]> {
   validateSplit(options);

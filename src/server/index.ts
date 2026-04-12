@@ -6,16 +6,27 @@ import { resolve } from "node:path";
 import { Server } from "socket.io";
 import { Dictionary } from "../shared/dictionary.js";
 import type { AuthUserView, ClientToServerEvents, RoomDirectoryResponse, ServerToClientEvents } from "../shared/types.js";
+import { getAllowedOrigins, getSessionCookieName, isOriginAllowed, parseCookieHeader, useSecureCookies } from "./http_security.js";
 import { createPersistence } from "./persistence.js";
-import { RoomManager } from "./room-manager.js";
+import { RoomManager } from "./room_manager.js";
 
 async function bootstrap() {
+  const allowedOrigins = new Set(getAllowedOrigins());
   const app = express();
   app.use((request, response, next) => {
-    response.header("Access-Control-Allow-Origin", request.headers.origin || "*");
-    response.header("Access-Control-Allow-Credentials", "true");
+    const requestOrigin = request.headers.origin;
+    if (requestOrigin && isOriginAllowed(requestOrigin, allowedOrigins)) {
+      response.header("Access-Control-Allow-Origin", requestOrigin);
+      response.header("Vary", "Origin");
+      response.header("Access-Control-Allow-Credentials", "true");
+    }
     response.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    response.header("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS");
     if (request.method === "OPTIONS") {
+      if (!isOriginAllowed(requestOrigin, allowedOrigins)) {
+        response.sendStatus(403);
+        return;
+      }
       response.sendStatus(204);
       return;
     }
@@ -24,19 +35,24 @@ async function bootstrap() {
   const server = createServer(app);
   const io = new Server<ClientToServerEvents, ServerToClientEvents>(server, {
     cors: {
-      origin: true,
+      origin: (origin, callback) => callback(null, isOriginAllowed(origin, allowedOrigins)),
+      methods: ["GET", "POST", "DELETE"],
+      allowedHeaders: ["Content-Type", "Authorization"],
       credentials: true
     }
   });
 
-  const dictionaryPath = resolve(process.cwd(), process.env.DICTIONARY_PATH || "public/dictionary/en-large.txt");
+  const dictionaryPath = resolve(process.cwd(), process.env.DICTIONARY_PATH || "public/dictionary/en_large.txt");
   const dictionary = new Dictionary(await readFile(dictionaryPath, "utf8"));
   const persistence = await createPersistence(process.env.DATABASE_URL);
   const roomManager = new RoomManager(io, dictionary, persistence);
 
   async function getAuthenticatedUser(request: express.Request): Promise<AuthUserView | null> {
+    const sessionCookieName = getSessionCookieName();
+    const cookieToken = parseCookieHeader(request.header("cookie"))[sessionCookieName] ?? "";
     const authHeader = request.header("authorization");
-    const token = authHeader?.startsWith("Bearer ") ? authHeader.slice("Bearer ".length).trim() : "";
+    const bearerToken = authHeader?.startsWith("Bearer ") ? authHeader.slice("Bearer ".length).trim() : "";
+    const token = cookieToken || bearerToken;
     if (!token) {
       return null;
     }
@@ -53,7 +69,8 @@ async function bootstrap() {
       const password = String(request.body?.password ?? "");
       const user = await persistence.registerUser(nickname, password);
       const token = await persistence.createSession(user.userId);
-      response.json({ token, user });
+      setSessionCookie(response, token);
+      response.json({ user });
     } catch (error) {
       response.status(400).json({ error: error instanceof Error ? error.message : "Registration failed." });
     }
@@ -69,10 +86,16 @@ async function bootstrap() {
       const password = String(request.body?.password ?? "");
       const user = await persistence.loginUser(nickname, password);
       const token = await persistence.createSession(user.userId);
-      response.json({ token, user });
+      setSessionCookie(response, token);
+      response.json({ user });
     } catch (error) {
       response.status(400).json({ error: error instanceof Error ? error.message : "Login failed." });
     }
+  });
+
+  app.post("/api/auth/logout", (_request, response) => {
+    clearSessionCookie(response);
+    response.json({ ok: true });
   });
 
   app.get("/api/auth/me", async (request, response) => {
@@ -169,9 +192,9 @@ async function bootstrap() {
   });
 
   if (process.env.NODE_ENV === "production") {
-    app.use(express.static(resolve(process.cwd(), "dist")));
+    app.use(express.static(resolve(process.cwd(), "build/client")));
     app.get("*", (_request, response) => {
-      response.sendFile(resolve(process.cwd(), "dist/index.html"));
+      response.sendFile(resolve(process.cwd(), "build/client/index.html"));
     });
   } else {
     app.get("/health", (_request, response) => {
@@ -190,3 +213,22 @@ async function bootstrap() {
 }
 
 void bootstrap();
+
+function setSessionCookie(response: express.Response, token: string): void {
+  response.cookie(getSessionCookieName(), token, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: useSecureCookies(),
+    path: "/",
+    maxAge: 30 * 24 * 60 * 60 * 1000
+  });
+}
+
+function clearSessionCookie(response: express.Response): void {
+  response.clearCookie(getSessionCookieName(), {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: useSecureCookies(),
+    path: "/"
+  });
+}

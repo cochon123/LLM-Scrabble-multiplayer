@@ -12,11 +12,11 @@ We are also planning to release a **leaderboard**.
 
 ### Home / Lobby
 
-![Home and lobby](docs/screenshots/home-lobby.png)
+![Home and lobby](docs/screenshots/home_lobby.png)
 
 ### Game Room
 
-![Game room](docs/screenshots/game-room.png)
+![Game room](docs/screenshots/game_room.png)
 
 ## What It Does
 
@@ -80,18 +80,25 @@ src/
     index.ts
     logger.ts
     persistence.ts
-    room-manager.ts
+    room_manager.ts
   shared/
-    agent-prompt.ts
+    agent_prompt.ts
     constants.ts
     dictionary.ts
     game.ts
     types.ts
+build/
+  client/
+  server/
+var/
+  bench/
+  logs/
+  postgres/
 public/
   dictionary/
-    en-large.txt
-    fr-basic.txt
-    fr-large.txt
+    en_large.txt
+    fr_basic.txt
+    fr_large.txt
   logos/
 ```
 
@@ -116,7 +123,12 @@ Create a `.env` file:
 ```bash
 DATABASE_URL=postgres://scrabble_codex:scrabble_codex@localhost:5432/scrabble_codex
 PORT=3001
-DICTIONARY_PATH=public/dictionary/en-large.txt
+DICTIONARY_PATH=public/dictionary/en_large.txt
+ADMIN_NICKNAME=admin
+ADMIN_PASSWORD=change_me
+CORS_ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+AUTH_COOKIE_NAME=scrabble_codex_session
+AUTH_COOKIE_SECURE=false
 ```
 
 ### 3. Create the PostgreSQL database
@@ -146,18 +158,20 @@ npm run build
 npm start
 ```
 
+Build output is written to `build/`, and local runtime data lives under `var/`.
+
 ## Authentication
 
 The app uses a deliberately simple auth system:
 
 - nickname
 - password
-- session token
+- HTTP-only session cookie
 
-There is also a built-in admin account:
+Admin access is configured through `.env`:
 
-- nickname: `admin`
-- password: `admin123`
+- nickname: `ADMIN_NICKNAME`
+- password: `ADMIN_PASSWORD`
 
 Admin can delete games, including games that are still running.
 
@@ -188,6 +202,8 @@ Supported providers in the UI:
 
 API keys can be entered in the UI. When a user enters or changes a key, the app can store it as that user’s default key for the provider.
 
+Saved default provider keys are resolved on the server and are never sent back to the browser. The UI only indicates when a saved default is being used.
+
 Current UI presets:
 
 - `openai_compatible` -> `http://127.0.0.1:1234/v1/chat/completions`
@@ -199,7 +215,7 @@ Current UI presets:
 
 The default runtime dictionary is:
 
-- `public/dictionary/en-large.txt`
+- `public/dictionary/en_large.txt`
 
 It is a stricter curated English list derived from the system `american-english` dictionary, with a conservative allowlist of short two-letter words. This avoids junk entries such as:
 

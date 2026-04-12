@@ -1,8 +1,7 @@
-dist/
-dist-server/
+build/
 node_modules/
-runtime-logs/
-runtime-bench/
+var/
 __pycache__/
 *.pyc
+*.backup
 .env

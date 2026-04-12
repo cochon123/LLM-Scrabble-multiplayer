@@ -163,7 +163,7 @@ Once provider handling was fixed, the benchmark reflected real output quality.
 ### OpenRouter + `google/gemma-4-31b-it`
 
 Run:
-- `runtime-bench/scrabble-toolcall/runs/openrouter-gemma4-31b-it-18cases-retries2`
+- `var/bench/scrabble_toolcall/runs/openrouter_gemma4_31b_it_18cases_retries2`
 
 Result:
 - `placements_json`: `66.7%` (`12/18`)
@@ -181,7 +181,7 @@ Key takeaway:
 ### OpenRouter + `google/gemma-4-31b-it` with generic overlap example
 
 Run:
-- `runtime-bench/scrabble-toolcall/runs/openrouter-gemma4-31b-it-overlap-example-limit6`
+- `var/bench/scrabble_toolcall/runs/openrouter_gemma4_31b_it_overlap_example_limit6`
 
 Result:
 - `4/18` successes on a small exploratory run
@@ -194,7 +194,7 @@ Key takeaway:
 ### OpenRouter + `google/gemma-4-31b-it` with `line_slots`
 
 Run:
-- `runtime-bench/scrabble-toolcall/runs/openrouter-gemma4-31b-it-18cases-lineslots-v2`
+- `var/bench/scrabble_toolcall/runs/openrouter_gemma4_31b_it_18cases_lineslots_v2`
 
 This run was stopped early after the ranking became clear.
 

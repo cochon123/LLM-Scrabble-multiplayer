@@ -55,7 +55,8 @@ def render_status_line(index: int, total: int, success_count: int, result: dict)
     cause = f" cause={result.get('failure_cause')}" if not result.get("success") else ""
     return (
         f"[{index:>4}/{total}] {marker} "
-        f"model={result.get('model')} technique={result.get('technique')} case={result.get('case_id')} "
+        f"model={result.get('model')} technique={result.get('technique')} "
+        f"context={result.get('context_format', '-')} case={result.get('case_id')} "
         f"latency={result.get('latency_ms')}ms valid={success_rate:5.1f}%{cause}"
     )
 
@@ -72,6 +73,29 @@ def render_summary_text(summary: dict) -> str:
     lines.append("Causes d'echec:")
     for cause, count in sorted(summary["failure_breakdown"].items(), key=lambda item: (-item[1], item[0])):
         lines.append(f"  - {cause}: {count}")
+    return "\n".join(lines)
+
+
+def render_context_summary_text(summary: dict) -> str:
+    lines = [
+        f"Provider: {summary['provider']}",
+        f"Models: {', '.join(summary['models'])}",
+        f"Dataset: {summary['dataset_path']}",
+        "Context format results:",
+    ]
+    for context_format, data in summary["by_context_format"].items():
+        prompt_tokens = data.get("avg_prompt_tokens")
+        total_tokens = data.get("avg_total_tokens")
+        per_success = data.get("avg_total_tokens_per_success")
+        avg_score = data.get("avg_score_valid")
+        lines.append(
+            "  - "
+            f"{context_format}: valid={data['success_rate']:.1f}% ({data['success']}/{data['total']}), "
+            f"avg_score_valid={avg_score if avg_score is not None else 'n/a'}, "
+            f"avg_prompt_tokens={prompt_tokens if prompt_tokens is not None else 'n/a'}, "
+            f"avg_total_tokens={total_tokens if total_tokens is not None else 'n/a'}, "
+            f"avg_total_tokens_per_success={per_success if per_success is not None else 'n/a'}"
+        )
     return "\n".join(lines)
 
 

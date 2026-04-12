@@ -4,6 +4,7 @@ from typing import Any, Literal, TypedDict
 
 Difficulty = Literal["simple", "medium", "hard"]
 TechniqueName = Literal["placements_json", "board_matrix_full", "delta_sparse", "line_slots"]
+ContextFormatName = Literal["summary_delta", "summary_delta_plus_2d_full", "board_2d_full", "board_2d_compact"]
 ProviderName = Literal["openai_compatible", "google"]
 FailureCause = Literal[
     "no_response",
@@ -23,6 +24,7 @@ FailureCause = Literal[
     "used_letter_not_in_rack",
     "wrong_letter_at_coordinate",
     "target_word_not_realized",
+    "illegal_move",
     "board_after_mismatch",
     "technique_specific_invalid_payload",
 ]
@@ -49,6 +51,7 @@ class BenchmarkCase(TypedDict):
 class BenchmarkJob(TypedDict):
     case_id: str
     technique: TechniqueName
+    context_format: ContextFormatName
     model: str
     provider: ProviderName
     prompt: str
@@ -63,11 +66,13 @@ class TechniqueResult(TypedDict, total=False):
     provider: ProviderName
     model: str
     technique: TechniqueName
+    context_format: ContextFormatName
     success: bool
     failure_cause: FailureCause | None
     raw_response: str
     parsed_payload: dict[str, Any] | None
     latency_ms: int
+    move_score: int | None
     predicted_board: list[list[str]] | None
     details: str | None
     usage: dict[str, Any] | None
@@ -86,3 +91,16 @@ class RunSummary(TypedDict):
     by_difficulty: dict[str, Any]
     failure_breakdown: dict[str, int]
     failure_breakdown_by_technique: dict[str, dict[str, int]]
+
+
+class ContextRunSummary(TypedDict):
+    provider: ProviderName
+    models: list[str]
+    dataset_path: str
+    techniques: list[TechniqueName]
+    context_formats: list[ContextFormatName]
+    totals: dict[str, Any]
+    by_context_format: dict[str, Any]
+    by_technique_and_context_format: dict[str, dict[str, Any]]
+    by_difficulty_and_context_format: dict[str, dict[str, Any]]
+    failure_breakdown_by_context_format: dict[str, dict[str, int]]

@@ -7,6 +7,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
       tailwind.config = {
+        darkMode: 'class',
         theme: {
           extend: {
             boxShadow: {
@@ -15,6 +16,18 @@
           }
         }
       };
+
+      // Detect system theme preference and apply it
+      function applySystemTheme() {
+        const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        document.documentElement.classList.toggle('dark', isDark);
+      }
+
+      // Apply theme on load
+      applySystemTheme();
+
+      // Listen for system theme changes
+      window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applySystemTheme);
     </script>
   </head>
   <body>

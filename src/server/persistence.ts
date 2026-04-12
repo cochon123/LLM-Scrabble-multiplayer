@@ -1,12 +1,14 @@
 import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import { Pool } from "pg";
-import type { AuthUserView, DefaultApiKeys, PlayerSeat, RoomOptions } from "../shared/types.js";
+import type { AgentProvider, AuthUserView, DefaultApiKeyStatus, PlayerSeat, RoomOptions, StoredDefaultApiKeys } from "../shared/types.js";
 
-const ADMIN_NICKNAME = "admin";
-const ADMIN_PASSWORD = "admin123";
 const SESSION_TTL_DAYS = 30;
 
-interface PersistedUserRecord extends AuthUserView {
+interface PersistedUserRecord {
+  userId: string;
+  nickname: string;
+  isAdmin: boolean;
+  savedDefaultApiKeys: StoredDefaultApiKeys;
   passwordHash?: string | null;
 }
 
@@ -47,7 +49,8 @@ export interface Persistence {
   loginUser(nickname: string, password: string): Promise<AuthUserView>;
   createSession(userId: string): Promise<string>;
   getUserBySessionToken(token: string): Promise<AuthUserView | null>;
-  saveDefaultApiKey(userId: string, provider: keyof DefaultApiKeys, apiKey: string): Promise<AuthUserView>;
+  getDefaultApiKey(userId: string, provider: AgentProvider): Promise<string | null>;
+  saveDefaultApiKey(userId: string, provider: AgentProvider, apiKey: string): Promise<AuthUserView>;
   createGame(input: {
     gameId: string;
     roomCode: string;
@@ -93,6 +96,9 @@ class NoopPersistence implements Persistence {
     throw new Error("Authentication requires DATABASE_URL.");
   }
   async getUserBySessionToken(): Promise<AuthUserView | null> {
+    return null;
+  }
+  async getDefaultApiKey(): Promise<string | null> {
     return null;
   }
   async saveDefaultApiKey(): Promise<AuthUserView> {
@@ -206,7 +212,7 @@ class PostgresPersistence implements Persistence {
     if (!password) {
       throw new Error("Password is required.");
     }
-    if (nickname.trim().toLowerCase() === ADMIN_NICKNAME) {
+    if (nickname.trim().toLowerCase() === getAdminNickname()) {
       throw new Error("This nickname is reserved.");
     }
     const existing = await this.findUserByName(nickname);
@@ -235,24 +241,30 @@ class PostgresPersistence implements Persistence {
       throw new Error("Nickname and password are required.");
     }
 
-    if (normalized.toLowerCase() === ADMIN_NICKNAME) {
-      if (password !== ADMIN_PASSWORD) {
+    if (normalized.toLowerCase() === getAdminNickname()) {
+      const adminPassword = getAdminPassword();
+      if (!adminPassword) {
+        throw new Error("Admin login is disabled. Configure ADMIN_PASSWORD in .env.");
+      }
+      if (password !== adminPassword) {
         throw new Error("Invalid nickname or password.");
       }
+      const adminNickname = getAdminNickname();
       await this.pool.query(
         `
           INSERT INTO users (id, name, password_hash, is_admin, settings_json)
-          VALUES ('admin', 'admin', NULL, TRUE, '{}'::jsonb)
+          VALUES ('admin', $1, NULL, TRUE, '{}'::jsonb)
           ON CONFLICT (id)
           DO UPDATE SET
             name = EXCLUDED.name,
             is_admin = TRUE,
             updated_at = NOW()
-        `
+        `,
+        [adminNickname]
       );
       return {
         userId: "admin",
-        nickname: "admin",
+        nickname: adminNickname,
         isAdmin: true,
         defaultApiKeys: {}
       };
@@ -296,15 +308,33 @@ class PostgresPersistence implements Persistence {
       return null;
     }
     const row = result.rows[0];
-    return {
+    return toAuthUserView({
       userId: row.id,
       nickname: row.name,
       isAdmin: row.is_admin,
-      defaultApiKeys: ((row.settings_json ?? {}) as { defaultApiKeys?: DefaultApiKeys }).defaultApiKeys ?? {}
-    };
+      savedDefaultApiKeys: readStoredDefaultApiKeys(row.settings_json)
+    });
   }
 
-  async saveDefaultApiKey(userId: string, provider: keyof DefaultApiKeys, apiKey: string): Promise<AuthUserView> {
+  async getDefaultApiKey(userId: string, provider: AgentProvider): Promise<string | null> {
+    const result = await this.pool.query(
+      `
+        SELECT settings_json
+        FROM users
+        WHERE id = $1
+        LIMIT 1
+      `,
+      [userId]
+    );
+    if (result.rowCount === 0) {
+      return null;
+    }
+    const defaultApiKeys = readStoredDefaultApiKeys(result.rows[0]?.settings_json);
+    const apiKey = defaultApiKeys[provider];
+    return typeof apiKey === "string" && apiKey.trim() ? apiKey : null;
+  }
+
+  async saveDefaultApiKey(userId: string, provider: AgentProvider, apiKey: string): Promise<AuthUserView> {
     const user = await this.pool.query(
       `
         UPDATE users
@@ -324,12 +354,12 @@ class PostgresPersistence implements Persistence {
       throw new Error("User not found.");
     }
     const row = user.rows[0];
-    return {
+    return toAuthUserView({
       userId: row.id,
       nickname: row.name,
       isAdmin: row.is_admin,
-      defaultApiKeys: ((row.settings_json ?? {}) as { defaultApiKeys?: DefaultApiKeys }).defaultApiKeys ?? {}
-    };
+      savedDefaultApiKeys: readStoredDefaultApiKeys(row.settings_json)
+    });
   }
 
   async createGame(input: {
@@ -536,7 +566,7 @@ class PostgresPersistence implements Persistence {
       userId: row.id,
       nickname: row.name,
       isAdmin: row.is_admin,
-      defaultApiKeys: ((row.settings_json ?? {}) as { defaultApiKeys?: DefaultApiKeys }).defaultApiKeys ?? {},
+      savedDefaultApiKeys: readStoredDefaultApiKeys(row.settings_json),
       passwordHash: row.password_hash
     };
   }
@@ -563,6 +593,26 @@ function toAuthUserView(user: PersistedUserRecord): AuthUserView {
     userId: user.userId,
     nickname: user.nickname,
     isAdmin: user.isAdmin,
-    defaultApiKeys: user.defaultApiKeys
+    defaultApiKeys: toDefaultApiKeyStatus(user.savedDefaultApiKeys)
   };
+}
+
+function readStoredDefaultApiKeys(settingsJson: unknown): StoredDefaultApiKeys {
+  return ((settingsJson ?? {}) as { defaultApiKeys?: StoredDefaultApiKeys }).defaultApiKeys ?? {};
+}
+
+function toDefaultApiKeyStatus(defaultApiKeys: StoredDefaultApiKeys): DefaultApiKeyStatus {
+  return Object.fromEntries(
+    Object.entries(defaultApiKeys)
+      .filter(([, value]) => typeof value === "string" && value.trim().length > 0)
+      .map(([provider]) => [provider, true])
+  ) as DefaultApiKeyStatus;
+}
+
+function getAdminNickname(): string {
+  return process.env.ADMIN_NICKNAME?.trim() || "admin";
+}
+
+function getAdminPassword(): string {
+  return process.env.ADMIN_PASSWORD?.trim() || "";
 }

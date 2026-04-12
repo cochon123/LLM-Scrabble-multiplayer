@@ -1,7 +1,7 @@
 import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
-const LOG_ROOT = join(process.cwd(), "runtime-logs", "rooms");
+const LOG_ROOT = join(process.cwd(), "var", "logs", "rooms");
 const writeQueues = new Map<string, Promise<void>>();
 
 export interface RoomLogEntry {
