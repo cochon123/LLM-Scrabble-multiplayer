@@ -880,12 +880,12 @@ function HomePage({
   return (
     <div className="min-h-screen overflow-y-auto bg-slate-50 dark:bg-slate-950 px-4 py-6 md:px-6">
       <div className="mx-auto grid max-w-7xl gap-6">
-        <section className="rounded-[28px] bg-white dark:bg-slate-900 p-6 shadow-xl shadow-slate-200/80 dark:shadow-slate-900/50">
+        <section className="rounded-xl bg-white dark:bg-slate-900 p-6 shadow-xl shadow-slate-200/80 dark:shadow-slate-900/50">
           <div className="grid gap-6 xl:grid-cols-[1.3fr_0.7fr]">
             <div>
               <p className="text-sm font-semibold uppercase tracking-[0.3em] text-indigo-500">Scrabble Webapp</p>
               <div className="mt-2 flex items-center gap-3">
-                <img src="/scrabble_logo.png" alt="Scrabble Codex" className="h-14 w-14 md:h-20 md:w-20 rounded-2xl object-contain" />
+                <img src="/scrabble_logo.png" alt="Scrabble Codex" className="h-14 w-14 md:h-20 md:w-20 rounded-xl object-contain" />
                 <h1 className="text-5xl font-black tracking-[0.08em] text-slate-900 dark:text-white md:text-7xl">SCRABBLE CODEX</h1>
               </div>
               <p className="mt-4 max-w-3xl text-lg leading-8 text-slate-600 dark:text-slate-300">
@@ -893,17 +893,17 @@ function HomePage({
                 orchestration.
               </p>
             </div>
-            <div className="grid gap-4 rounded-[28px] bg-slate-50 dark:bg-slate-950 p-5">
+            <div className="grid gap-4 rounded-xl bg-slate-50 dark:bg-slate-950 p-5">
               {authUser ? (
                 <>
-                  <div className="rounded-[24px] bg-white dark:bg-slate-900 p-4">
+                  <div className="rounded-xl bg-white dark:bg-slate-900 p-4">
                     <p className="text-sm font-semibold text-slate-500 dark:text-slate-400">Signed in as</p>
                     <div className="mt-1 flex items-center justify-between gap-3">
                       <div>
                         <p className="text-xl font-bold text-slate-900 dark:text-white">{authUser.nickname}</p>
                         <p className="text-sm text-slate-500 dark:text-slate-400">{authUser.isAdmin ? "Admin" : "User"}</p>
                       </div>
-                      <button className="rounded-2xl bg-slate-200 dark:bg-slate-700 px-4 py-3 font-semibold text-slate-800 dark:text-slate-200 hover:bg-slate-300 dark:hover:bg-slate-600 transition" onClick={onLogout}>
+                      <button className="rounded-xl bg-slate-200 dark:bg-slate-700 px-4 py-3 font-semibold text-slate-800 dark:text-slate-200 hover:bg-slate-300 dark:hover:bg-slate-600 transition" onClick={onLogout}>
                         Sign out
                       </button>
                     </div>
@@ -911,16 +911,16 @@ function HomePage({
                   <label className="grid gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
                     Room code
                     <input
-                      className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-3 uppercase outline-none transition focus:border-indigo-500"
+                      className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-3 uppercase outline-none transition focus:border-indigo-500"
                       value={roomCode}
                       onChange={(event) => setRoomCode(event.target.value)}
                     />
                   </label>
                   <div className="flex flex-wrap gap-3">
-                    <button className="rounded-2xl bg-indigo-600 px-5 py-3 font-semibold text-white hover:bg-indigo-700 dark:hover:bg-indigo-500" onClick={onCreate}>
+                    <button className="rounded-xl bg-indigo-600 px-5 py-3 font-semibold text-white hover:bg-indigo-700 dark:hover:bg-indigo-500" onClick={onCreate}>
                       Create room
                     </button>
-                    <button className="rounded-2xl bg-slate-200 dark:bg-slate-700 px-5 py-3 font-semibold text-slate-800 dark:text-slate-200 hover:bg-slate-300 dark:hover:bg-slate-600 transition" onClick={onJoin}>
+                    <button className="rounded-xl bg-slate-200 dark:bg-slate-700 px-5 py-3 font-semibold text-slate-800 dark:text-slate-200 hover:bg-slate-300 dark:hover:bg-slate-600 transition" onClick={onJoin}>
                       Join as player
                     </button>
                   </div>
@@ -931,7 +931,7 @@ function HomePage({
                   <label className="grid gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
                     Nickname
                     <input
-                      className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-3 outline-none transition focus:border-indigo-500"
+                      className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-3 outline-none transition focus:border-indigo-500"
                       value={authDraftNickname}
                       onChange={(event) => setAuthDraftNickname(event.target.value)}
                     />
@@ -940,21 +940,21 @@ function HomePage({
                     Password
                     <input
                       type="password"
-                      className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-3 outline-none transition focus:border-indigo-500"
+                      className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-3 outline-none transition focus:border-indigo-500"
                       value={authDraftPassword}
                       onChange={(event) => setAuthDraftPassword(event.target.value)}
                     />
                   </label>
                   <div className="flex flex-wrap gap-3">
                     <button
-                      className="rounded-2xl bg-indigo-600 px-5 py-3 font-semibold text-white hover:bg-indigo-700 dark:hover:bg-indigo-500 disabled:opacity-50"
+                      className="rounded-xl bg-indigo-600 px-5 py-3 font-semibold text-white hover:bg-indigo-700 dark:hover:bg-indigo-500 disabled:opacity-50"
                       onClick={onLogin}
                       disabled={authLoading}
                     >
                       Sign in
                     </button>
                     <button
-                      className="rounded-2xl bg-slate-200 dark:bg-slate-700 px-5 py-3 font-semibold text-slate-800 dark:text-slate-200 hover:bg-slate-300 dark:hover:bg-slate-600 disabled:opacity-50"
+                      className="rounded-xl bg-slate-200 dark:bg-slate-700 px-5 py-3 font-semibold text-slate-800 dark:text-slate-200 hover:bg-slate-300 dark:hover:bg-slate-600 disabled:opacity-50"
                       onClick={onRegister}
                       disabled={authLoading}
                     >
@@ -968,7 +968,7 @@ function HomePage({
           </div>
         </section>
 
-        <section className="rounded-[28px] bg-white dark:bg-slate-900 p-6 shadow-xl shadow-slate-200/80 dark:shadow-slate-900/50">
+        <section className="rounded-xl bg-white dark:bg-slate-900 p-6 shadow-xl shadow-slate-200/80 dark:shadow-slate-900/50">
           <div className="mb-5 flex items-center justify-between gap-3">
             <div>
               <p className="text-sm font-semibold uppercase tracking-[0.28em] text-slate-400 dark:text-slate-500">Directory</p>
@@ -988,7 +988,7 @@ function HomePage({
               />
             ))}
             {rooms.length === 0 ? (
-              <div className="rounded-[24px] border border-dashed border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-950 p-6 text-slate-500 dark:text-slate-400">
+              <div className="rounded-xl border border-dashed border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-950 p-6 text-slate-500 dark:text-slate-400">
                 No active rooms right now.
               </div>
             ) : null}
@@ -1110,7 +1110,7 @@ function RoomPage(props: {
   if (loadingRoom && !view) {
     return (
       <div className="flex h-full items-center justify-center bg-slate-50 dark:bg-slate-950">
-        <div className="rounded-[24px] bg-white dark:bg-slate-900 px-6 py-5 shadow-xl shadow-slate-200/80 dark:shadow-slate-900/50">Loading room…</div>
+        <div className="rounded-xl bg-white dark:bg-slate-900 px-6 py-5 shadow-xl shadow-slate-200/80 dark:shadow-slate-900/50">Loading room…</div>
       </div>
     );
   }
@@ -1118,10 +1118,10 @@ function RoomPage(props: {
   if (!view) {
     return (
       <div className="flex h-full items-center justify-center bg-slate-50 dark:bg-slate-950 px-4">
-        <div className="grid max-w-xl gap-4 rounded-[28px] bg-white dark:bg-slate-900 p-8 text-center shadow-xl shadow-slate-200/80 dark:shadow-slate-900/50">
+        <div className="grid max-w-xl gap-4 rounded-xl bg-white dark:bg-slate-900 p-8 text-center shadow-xl shadow-slate-200/80 dark:shadow-slate-900/50">
           <h1 className="text-3xl font-bold">Room not found</h1>
           <p className="text-slate-600 dark:text-slate-300">The room `{routeRoomId}` does not exist or is no longer available in memory.</p>
-          <button className="rounded-2xl bg-indigo-600 px-5 py-3 font-semibold text-white hover:bg-indigo-700 dark:hover:bg-indigo-500" onClick={() => window.location.assign("/")}>
+          <button className="rounded-xl bg-indigo-600 px-5 py-3 font-semibold text-white hover:bg-indigo-700 dark:hover:bg-indigo-500" onClick={() => window.location.assign("/")}>
             Back to home
           </button>
         </div>
@@ -1135,7 +1135,7 @@ function RoomPage(props: {
         view.status === "lobby" ? "overflow-y-auto overflow-x-hidden" : "overflow-hidden"
       }`}
     >
-      <header className="mb-3 rounded-[28px] bg-white dark:bg-slate-900 px-5 py-4 shadow-xl shadow-slate-200/80 dark:shadow-slate-900/50">
+      <header className="mb-3 rounded-xl bg-white dark:bg-slate-900 px-5 py-4 shadow-xl shadow-slate-200/80 dark:shadow-slate-900/50">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex flex-wrap items-center gap-3">
             <p className="text-sm font-semibold uppercase tracking-[0.3em] text-indigo-500">Room {view.roomId}</p>
@@ -1154,7 +1154,7 @@ function RoomPage(props: {
               {view.viewerRole === "player" ? "Player" : "Spectator"}
             </span>
             {view.status === "lobby" && view.viewerRole === "spectator" && activeHumanSeatAvailable ? (
-              <button className="rounded-2xl bg-indigo-600 px-4 py-3 font-semibold text-white hover:bg-indigo-700 dark:hover:bg-indigo-500" onClick={onJoinAsPlayer}>
+              <button className="rounded-xl bg-indigo-600 px-4 py-3 font-semibold text-white hover:bg-indigo-700 dark:hover:bg-indigo-500" onClick={onJoinAsPlayer}>
                 Join as player
               </button>
             ) : null}
@@ -1163,11 +1163,14 @@ function RoomPage(props: {
       </header>
 
       <main
-        className={`grid gap-3 xl:grid-cols-[280px_minmax(0,1fr)_520px] ${
-          view.status === "lobby" ? "items-start" : "min-h-0 flex-1"
+        className={`grid gap-3 ${
+          view.status === "lobby"
+            ? "items-start"
+            : "min-h-0 flex-1 xl:grid-cols-[280px_minmax(0,1fr)_520px]"
         }`}
       >
-        <aside className="min-h-0 overflow-y-auto rounded-[28px] bg-white dark:bg-slate-900 p-4 shadow-xl shadow-slate-200/80 dark:shadow-slate-900/50">
+        {view.status !== "lobby" && (
+        <aside className="min-h-0 overflow-y-auto rounded-xl bg-white dark:bg-slate-900 p-4 shadow-xl shadow-slate-200/80 dark:shadow-slate-900/50">
           <div className="mb-4">
             <p className="text-sm font-semibold uppercase tracking-[0.28em] text-slate-400 dark:text-slate-500">Leaderboard</p>
             <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Scores</h2>
@@ -1177,13 +1180,14 @@ function RoomPage(props: {
               <LeaderboardCard key={player.id} player={player} />
             ))}
           </div>
-          <div className="mt-4 rounded-[24px] bg-slate-50 dark:bg-slate-950 p-4 text-sm text-slate-600 dark:text-slate-300">
+          <div className="mt-4 rounded-xl bg-slate-50 dark:bg-slate-950 p-4 text-sm text-slate-600 dark:text-slate-300">
             <p>Spectators: {view.spectatorCount}</p>
             <p className="mt-1">Status: {roomStatusLabel(view.status)}</p>
           </div>
         </aside>
+        )}
 
-        <section className="min-h-0 overflow-y-auto rounded-[28px] bg-white dark:bg-slate-900 p-4 shadow-xl shadow-slate-200/80 dark:shadow-slate-900/50">
+        <section className="min-h-0 overflow-y-auto rounded-xl bg-white dark:bg-slate-900 p-4 shadow-xl shadow-slate-200/80 dark:shadow-slate-900/50">
           {view.status === "lobby" ? (
             <LobbyView
               view={view}
@@ -1273,7 +1277,7 @@ function LobbyView({
           <p className="mt-2 text-slate-600 dark:text-slate-300">Spectators can watch this room live and send chat messages.</p>
         </div>
         {isHost ? (
-          <button className="rounded-2xl bg-indigo-600 px-5 py-3 font-semibold text-white hover:bg-indigo-700 dark:hover:bg-indigo-500" onClick={startGame}>
+          <button className="rounded-xl bg-indigo-600 px-5 py-3 font-semibold text-white hover:bg-indigo-700 dark:hover:bg-indigo-500" onClick={startGame}>
             Start game
           </button>
         ) : null}
@@ -1281,7 +1285,7 @@ function LobbyView({
 
       {error ? <InlineError message={error} /> : null}
 
-      <div className="rounded-[24px] bg-slate-50 dark:bg-slate-950 p-4">
+      <div className="rounded-xl bg-slate-50 dark:bg-slate-950 p-4">
         <label className="flex items-center gap-3 text-sm font-semibold text-slate-700 dark:text-slate-200">
           <input
             type="checkbox"
@@ -1294,7 +1298,7 @@ function LobbyView({
         </label>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-2">
+      <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
         {view.game.players.map((seat) => (
           <SeatEditor
             key={seat.id}
@@ -1375,21 +1379,21 @@ function GameView({
       </div>
       <div className="flex flex-wrap gap-2">
         <button
-          className="rounded-2xl bg-indigo-600 px-4 py-3 font-semibold text-white hover:bg-indigo-700 dark:hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-indigo-300"
+          className="rounded-xl bg-indigo-600 px-4 py-3 font-semibold text-white hover:bg-indigo-700 dark:hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-indigo-300"
           onClick={submitMove}
           disabled={!myTurn || tentativePlacements.length === 0}
         >
           Play
         </button>
         <button
-          className="rounded-2xl bg-slate-200 dark:bg-slate-700 px-4 py-3 font-semibold text-slate-800 dark:text-slate-200 hover:bg-slate-300 dark:hover:bg-slate-600 disabled:cursor-not-allowed disabled:opacity-50"
+          className="rounded-xl bg-slate-200 dark:bg-slate-700 px-4 py-3 font-semibold text-slate-800 dark:text-slate-200 hover:bg-slate-300 dark:hover:bg-slate-600 disabled:cursor-not-allowed disabled:opacity-50"
           onClick={clearDraftMove}
           disabled={tentativePlacements.length === 0}
         >
           Clear
         </button>
         <button
-          className="rounded-2xl bg-slate-200 dark:bg-slate-700 px-4 py-3 font-semibold text-slate-800 dark:text-slate-200 hover:bg-slate-300 dark:hover:bg-slate-600 disabled:cursor-not-allowed disabled:opacity-50"
+          className="rounded-xl bg-slate-200 dark:bg-slate-700 px-4 py-3 font-semibold text-slate-800 dark:text-slate-200 hover:bg-slate-300 dark:hover:bg-slate-600 disabled:cursor-not-allowed disabled:opacity-50"
           onClick={passTurn}
           disabled={!myTurn}
         >
@@ -1399,7 +1403,7 @@ function GameView({
 
       {error ? <InlineError message={error} /> : null}
 
-      <div className="rounded-[28px] bg-slate-50 dark:bg-slate-950 p-4">
+      <div className="rounded-xl bg-slate-50 dark:bg-slate-950 p-4">
         <BoardGrid
           board={view.game.board}
           tentativePlacements={tentativePlacements}
@@ -1414,7 +1418,7 @@ function GameView({
       </div>
 
       <div
-        className={`rounded-[28px] bg-slate-50 dark:bg-slate-950 p-4 transition-all ${
+        className={`rounded-xl bg-slate-50 dark:bg-slate-950 p-4 transition-all ${
           myTurn && draggedTileId && tentativePlacements.some((p) => p.tileId === draggedTileId)
             ? "ring-4 ring-dashed ring-orange-400 bg-orange-50 dark:bg-orange-950/20"
             : ""
@@ -1446,7 +1450,7 @@ function GameView({
           <div className="flex flex-wrap gap-2">
             {showLegalMovesFeature ? (
               <button
-                className="rounded-2xl bg-white dark:bg-slate-900 px-4 py-3 font-semibold text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-xl bg-white dark:bg-slate-900 px-4 py-3 font-semibold text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
                 onClick={toggleLegalMovesPanel}
                 disabled={!myTurn}
               >
@@ -1454,7 +1458,7 @@ function GameView({
               </button>
             ) : null}
             <button
-              className="rounded-2xl bg-white dark:bg-slate-900 px-4 py-3 font-semibold text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+              className="rounded-xl bg-white dark:bg-slate-900 px-4 py-3 font-semibold text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
               onClick={exchangeTiles}
               disabled={!myTurn || exchangeSelection.length === 0}
             >
@@ -1502,13 +1506,13 @@ function GameView({
       </div>
 
       {showLegalMovesFeature && showLegalMovesPanel ? (
-        <section className="rounded-[28px] bg-slate-50 dark:bg-slate-950 p-4">
+        <section className="rounded-xl bg-slate-50 dark:bg-slate-950 p-4">
           <div className="mb-3 flex items-center justify-between gap-3">
             <div>
               <h3 className="text-xl font-bold text-slate-900 dark:text-white">Legal moves</h3>
               <p className="text-sm text-slate-500 dark:text-slate-400">Compact grid. Click a card to prepare the move.</p>
             </div>
-            <button className="rounded-2xl bg-white dark:bg-slate-900 px-4 py-3 font-semibold text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800" onClick={requestLegalMoves} disabled={!myTurn}>
+            <button className="rounded-xl bg-white dark:bg-slate-900 px-4 py-3 font-semibold text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800" onClick={requestLegalMoves} disabled={!myTurn}>
               Refresh
             </button>
           </div>
@@ -1559,18 +1563,18 @@ function ConversationPanel({
   onSendChat: () => void;
 }) {
   return (
-    <aside className="min-w-0 flex min-h-0 flex-col overflow-hidden rounded-[28px] bg-white dark:bg-slate-950 p-4 shadow-xl shadow-slate-200/80 dark:shadow-slate-950/70 dark:ring-1 dark:ring-white/6">
+    <aside className="min-w-0 flex min-h-0 flex-col overflow-hidden rounded-xl bg-white dark:bg-slate-950 p-4 shadow-xl shadow-slate-200/80 dark:shadow-slate-950/70 dark:ring-1 dark:ring-white/6">
       <div className="mb-4 flex items-center justify-between gap-3">
         <div>
           <p className="text-sm font-semibold uppercase tracking-[0.28em] text-slate-400 dark:text-slate-500">Conversation</p>
           <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Chat</h2>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button className="rounded-2xl bg-slate-100 dark:bg-slate-900 px-4 py-3 text-sm font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-800 dark:ring-1 dark:ring-white/8" onClick={onCycleMode}>
+          <button className="rounded-xl bg-slate-100 dark:bg-slate-900 px-4 py-3 text-sm font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-800 dark:ring-1 dark:ring-white/8" onClick={onCycleMode}>
             Mode: {modeLabel(mode)}
           </button>
           <button
-            className="rounded-2xl bg-indigo-600 px-4 py-3 text-sm font-semibold text-white hover:bg-indigo-700 dark:hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-indigo-300"
+            className="rounded-xl bg-indigo-600 px-4 py-3 text-sm font-semibold text-white hover:bg-indigo-700 dark:hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-indigo-300"
             onClick={onPause}
             disabled={!isHost || view.status === "lobby" || view.game.finished}
           >
@@ -1579,7 +1583,7 @@ function ConversationPanel({
         </div>
       </div>
 
-      <div ref={feedRef} className="min-w-0 min-h-0 flex-1 overflow-y-auto overflow-x-hidden rounded-[24px] bg-slate-100 dark:bg-slate-900 p-3">
+      <div ref={feedRef} className="min-w-0 min-h-0 flex-1 overflow-y-auto overflow-x-hidden rounded-xl bg-slate-100 dark:bg-slate-900 p-3">
         <div className="grid gap-3">
           {items.map((item) =>
             item.type === "chat" ? (
@@ -1601,13 +1605,13 @@ function ConversationPanel({
               />
             )
           )}
-          {items.length === 0 ? <div className="rounded-[20px] bg-white dark:bg-slate-950 px-4 py-3 text-sm text-slate-500 dark:text-slate-400">No messages yet.</div> : null}
+          {items.length === 0 ? <div className="rounded-lg bg-white dark:bg-slate-950 px-4 py-3 text-sm text-slate-500 dark:text-slate-400">No messages yet.</div> : null}
         </div>
       </div>
 
       <div className="mt-4 grid gap-3">
         <input
-          className="rounded-2xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-3 text-slate-900 dark:text-white outline-none transition focus:border-indigo-500 dark:placeholder:text-slate-500"
+          className="rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-3 text-slate-900 dark:text-white outline-none transition focus:border-indigo-500 dark:placeholder:text-slate-500"
           value={chatDraft}
           onChange={(event) => setChatDraft(event.target.value)}
           onKeyDown={(event) => {
@@ -1617,7 +1621,7 @@ function ConversationPanel({
           }}
           placeholder="Write a message"
         />
-        <button className="rounded-2xl bg-indigo-600 px-4 py-3 font-semibold text-white hover:bg-indigo-700 dark:hover:bg-indigo-500 transition" onClick={onSendChat}>
+        <button className="rounded-xl bg-indigo-600 px-4 py-3 font-semibold text-white hover:bg-indigo-700 dark:hover:bg-indigo-500 transition" onClick={onSendChat}>
           Send
         </button>
       </div>
@@ -1628,7 +1632,7 @@ function ConversationPanel({
 function LeaderboardCard({ player }: { player: PlayerSeat }) {
   return (
     <div
-      className={`rounded-[24px] border p-4 ${
+      className={`rounded-xl border p-4 ${
         player.isCurrentTurn ? "border-indigo-400 dark:border-indigo-600 bg-indigo-50 dark:bg-indigo-900/20" : "border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950"
       }`}
     >
@@ -1658,7 +1662,7 @@ function RoomCard({
   onDelete: (() => void) | null;
 }) {
   return (
-    <div className="grid gap-4 rounded-[24px] bg-slate-50 dark:bg-slate-950 p-5">
+    <div className="grid gap-4 rounded-xl bg-slate-50 dark:bg-slate-950 p-5">
       <div className="flex items-center justify-between gap-3">
         <div>
           <p className="text-sm font-semibold uppercase tracking-[0.28em] text-slate-400 dark:text-slate-500">Room</p>
@@ -1668,7 +1672,7 @@ function RoomCard({
       </div>
       <div className="grid gap-2">
         {room.seatSummaries.filter((seat) => seat.enabled).map((seat) => (
-          <div key={seat.id} className="flex items-center justify-between rounded-2xl bg-white dark:bg-slate-900 px-4 py-3">
+          <div key={seat.id} className="flex items-center justify-between rounded-xl bg-white dark:bg-slate-900 px-4 py-3">
             <div className="flex items-center gap-3">
               <ModelLogo seat={seat} size="sm" />
               <div>
@@ -1685,16 +1689,16 @@ function RoomCard({
         <span>{room.currentTurnPlayerName ? `To ${room.currentTurnPlayerName}` : "Waiting"}</span>
       </div>
       <div className="flex flex-wrap gap-2">
-        <button className="rounded-2xl bg-indigo-600 px-4 py-3 font-semibold text-white hover:bg-indigo-700 dark:hover:bg-indigo-500" onClick={onWatch}>
+        <button className="rounded-xl bg-indigo-600 px-4 py-3 font-semibold text-white hover:bg-indigo-700 dark:hover:bg-indigo-500" onClick={onWatch}>
           Watch
         </button>
         {onDelete ? (
-          <button className="rounded-2xl bg-red-100 dark:bg-red-900/30 px-4 py-3 font-semibold text-red-700 dark:text-red-400 hover:bg-red-200 dark:hover:bg-red-900/50" onClick={onDelete}>
+          <button className="rounded-xl bg-red-100 dark:bg-red-900/30 px-4 py-3 font-semibold text-red-700 dark:text-red-400 hover:bg-red-200 dark:hover:bg-red-900/50" onClick={onDelete}>
             Delete
           </button>
         ) : null}
         {onJoin ? (
-          <button className="rounded-2xl bg-slate-200 dark:bg-slate-700 px-4 py-3 font-semibold text-slate-800 dark:text-slate-200 hover:bg-slate-300 dark:hover:bg-slate-600 transition" onClick={onJoin}>
+          <button className="rounded-xl bg-slate-200 dark:bg-slate-700 px-4 py-3 font-semibold text-slate-800 dark:text-slate-200 hover:bg-slate-300 dark:hover:bg-slate-600 transition" onClick={onJoin}>
             Join
           </button>
         ) : null}
@@ -1739,9 +1743,9 @@ function BoardGrid({
   };
 
   return (
-    <div className="mx-auto w-full max-w-[620px] overflow-x-auto rounded-[24px] bg-gradient-to-br from-slate-100 via-white to-slate-200 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)] dark:from-slate-950 dark:via-slate-950 dark:to-slate-900 dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+    <div className="mx-auto w-full max-w-[620px] overflow-x-auto rounded-xl bg-gradient-to-br from-slate-100 via-white to-slate-200 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)] dark:from-slate-950 dark:via-slate-950 dark:to-slate-900 dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
       <div
-        className="grid min-w-[500px] gap-1 rounded-[20px] bg-slate-700 p-1.5 dark:bg-slate-900 dark:ring-1 dark:ring-white/8"
+        className="grid min-w-[500px] gap-1 rounded-lg bg-slate-700 p-1.5 dark:bg-slate-900 dark:ring-1 dark:ring-white/8"
         style={{ gridTemplateColumns: "repeat(15, minmax(0, 1fr))" }}
       >
         {board.flat().map((cell) => {
@@ -1851,7 +1855,7 @@ function RackTile({
         onToggleExchange();
       }}
       disabled={disabled}
-      className={`min-h-[78px] rounded-[18px] border px-2 py-2 text-slate-900 dark:text-white shadow-sm transition-all duration-200 ${
+      className={`min-h-[78px] rounded-lg border px-2 py-2 text-slate-900 dark:text-white shadow-sm transition-all duration-200 ${
         selected ? "border-indigo-500 ring-2 ring-indigo-500" : "border-slate-200 dark:border-slate-700"
       } ${exchange ? "bg-slate-200 dark:bg-slate-700/50" : "bg-slate-100 dark:bg-slate-800/40"} ${
         disabled ? "cursor-not-allowed opacity-50" : "hover:-translate-y-0.5"
@@ -1906,45 +1910,50 @@ function SeatEditor({
     setDraftSystemPrompt(seat.agentConfig?.systemPrompt ?? defaultPromptForSeat);
   }, [defaultPromptForSeat, seat.id, seat.name, seat.agentConfig?.provider, seat.agentConfig?.model, seat.agentConfig?.baseUrl, seat.agentConfig?.systemPrompt, seat.agentConfig?.useSavedApiKey, seat.agentConfig?.hasCustomApiKey]);
 
-  return (
-    <div className={`grid gap-3 rounded-[24px] border p-4 ${seat.enabled ? "border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950" : "border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800/70 opacity-60"}`}>
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <ModelLogo seat={seat} size="lg" />
-          <div>
-            <strong className="block text-lg text-slate-900 dark:text-white">Seat {seat.seatIndex + 1}</strong>
-            <p className="text-sm text-slate-500 dark:text-slate-400">{seat.kind === "agent" ? "AI agent" : "Human player"}</p>
-          </div>
-        </div>
-        <label className="flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
-          Active
-          <input
-            type="checkbox"
-            className="h-5 w-5 rounded border-slate-300 dark:border-slate-600 text-indigo-600"
-            checked={seat.enabled}
-            disabled={disabled}
-            onChange={(event) => onChange(seat, { enabled: event.target.checked })}
-          />
-        </label>
-      </div>
+  const [showPicker, setShowPicker] = useState(false);
 
-      <label className="grid gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
-        Type
-        <select
-          className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-3"
-          value={seat.kind}
+  if (!seat.enabled) {
+    return (
+      <div className="relative">
+        <button
+          className="flex h-full min-h-[80px] w-full items-center justify-center rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-800/70 text-slate-400 hover:border-indigo-400 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 transition"
           disabled={disabled}
-          onChange={(event) => onChange(seat, { kind: event.target.value as PlayerSeat["kind"] })}
+          onClick={() => { if (!disabled) setShowPicker(true); }}
         >
-          <option value="human">Human</option>
-          <option value="agent">Agent</option>
-        </select>
-      </label>
+          <span className="text-3xl font-light">+</span>
+        </button>
+        {showPicker ? (
+          <div className="absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-white/95 dark:bg-slate-900/95 shadow-lg">
+            <div className="flex flex-col gap-3 p-4">
+              <p className="text-sm font-semibold text-slate-700 dark:text-slate-200 text-center">Add player</p>
+              <div className="flex gap-3">
+                <button
+                  className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
+                  onClick={() => { setShowPicker(false); onChange(seat, { enabled: true, kind: "human", name: `Player ${seat.seatIndex + 1}` }); }}
+                >
+                  Human
+                </button>
+                <button
+                  className="rounded-xl bg-slate-700 dark:bg-slate-600 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-600 dark:hover:bg-slate-500"
+                  onClick={() => { setShowPicker(false); onChange(seat, { enabled: true, kind: "agent", name: `Agent ${seat.seatIndex + 1}`, agentConfig: { ...agentConfig, systemPrompt: defaultPromptForSeat } }); }}
+                >
+                  AI
+                </button>
+              </div>
+              <button className="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300" onClick={() => setShowPicker(false)}>Cancel</button>
+            </div>
+          </div>
+        ) : null}
+      </div>
+    );
+  }
 
-      <label className="grid gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
-        Name
+  return (
+    <div className={`grid gap-3 rounded-xl border p-4 border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950`}>
+      <div className="flex items-center gap-3">
+        <ModelLogo seat={seat} size="lg" />
         <input
-          className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-3"
+          className="flex-1 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm font-semibold text-slate-900 dark:text-white"
           value={draftName}
           disabled={disabled}
           onChange={(event) => setDraftName(event.target.value)}
@@ -1954,14 +1963,25 @@ function SeatEditor({
             }
           }}
         />
-      </label>
+        <span className="text-xs font-medium text-slate-400 dark:text-slate-500">{seat.kind === "agent" ? "AI" : "Human"}</span>
+        <button
+          className="rounded-lg p-2 text-slate-400 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-950/30 dark:hover:text-red-400 transition"
+          disabled={disabled}
+          onClick={() => { if (!disabled) onChange(seat, { enabled: false, kind: seat.kind, name: seat.name }); }}
+          title="Remove player"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+            <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
+          </svg>
+        </button>
+      </div>
 
       {seat.kind === "agent" ? (
         <>
-          <label className="grid gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
-            Provider
+          <div className="flex items-center gap-3 text-sm font-semibold text-slate-700 dark:text-slate-200">
+            <span className="w-20 shrink-0">Provider</span>
             <select
-              className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-3"
+              className="flex-1 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm"
               value={agentConfig.provider}
               disabled={disabled}
               onChange={(event) => {
@@ -1989,12 +2009,12 @@ function SeatEditor({
               <option value="google">Google AI</option>
               <option value="ollama">Ollama</option>
             </select>
-          </label>
+          </div>
 
-          <label className="grid gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
-            Model
+          <div className="flex items-center gap-3 text-sm font-semibold text-slate-700 dark:text-slate-200">
+            <span className="w-20 shrink-0">Model</span>
             <input
-              className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-3"
+              className="flex-1 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm"
               value={draftModel}
               disabled={disabled}
               onChange={(event) => setDraftModel(event.target.value)}
@@ -2004,32 +2024,12 @@ function SeatEditor({
                 }
               }}
             />
-          </label>
+          </div>
 
-          <label className="flex items-center gap-3 text-sm font-semibold text-slate-700 dark:text-slate-200">
+          <div className="flex items-center gap-3 text-sm font-semibold text-slate-700 dark:text-slate-200">
+            <span className="w-20 shrink-0">Base URL</span>
             <input
-              type="checkbox"
-              className="h-5 w-5 rounded border-slate-300 dark:border-slate-600 text-indigo-600"
-              checked={Boolean(agentConfig.allowLegalMoves)}
-              disabled={disabled}
-              onChange={(event) => {
-                const nextAllowLegalMoves = event.target.checked;
-                const nextDefaultPrompt = buildDefaultAgentSystemPrompt(nextAllowLegalMoves);
-                const nextSystemPrompt =
-                  isDefaultAgentSystemPrompt(agentConfig.systemPrompt) ? nextDefaultPrompt : agentConfig.systemPrompt ?? nextDefaultPrompt;
-                setDraftSystemPrompt(nextSystemPrompt);
-                onChange(seat, {
-                  agentConfig: { ...agentConfig, allowLegalMoves: nextAllowLegalMoves, systemPrompt: nextSystemPrompt }
-                });
-              }}
-            />
-            Allow this agent to request legal moves
-          </label>
-
-          <label className="grid gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
-            Base URL
-            <input
-              className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-3"
+              className="flex-1 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm"
               value={draftBaseUrl}
               disabled={disabled}
               onChange={(event) => setDraftBaseUrl(event.target.value)}
@@ -2039,12 +2039,12 @@ function SeatEditor({
                 }
               }}
             />
-          </label>
+          </div>
 
-          <label className="grid gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
-            API key
+          <div className="flex items-center gap-3 text-sm font-semibold text-slate-700 dark:text-slate-200">
+            <span className="w-20 shrink-0">API key</span>
             <input
-              className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-3"
+              className="flex-1 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm"
               value={draftApiKey}
               disabled={disabled}
               placeholder={
@@ -2080,15 +2080,32 @@ function SeatEditor({
                 setDraftApiKeyDirty(false);
               }}
             />
-            {agentConfig.useSavedApiKey ? (
-              <span className="text-xs font-medium text-slate-500 dark:text-slate-400">The saved default key for this provider will be used on the server.</span>
-            ) : null}
+          </div>
+
+          <label className="flex items-center gap-3 text-sm font-semibold text-slate-700 dark:text-slate-200">
+            <input
+              type="checkbox"
+              className="h-5 w-5 rounded border-slate-300 dark:border-slate-600 text-indigo-600"
+              checked={Boolean(agentConfig.allowLegalMoves)}
+              disabled={disabled}
+              onChange={(event) => {
+                const nextAllowLegalMoves = event.target.checked;
+                const nextDefaultPrompt = buildDefaultAgentSystemPrompt(nextAllowLegalMoves);
+                const nextSystemPrompt =
+                  isDefaultAgentSystemPrompt(agentConfig.systemPrompt) ? nextDefaultPrompt : agentConfig.systemPrompt ?? nextDefaultPrompt;
+                setDraftSystemPrompt(nextSystemPrompt);
+                onChange(seat, {
+                  agentConfig: { ...agentConfig, allowLegalMoves: nextAllowLegalMoves, systemPrompt: nextSystemPrompt }
+                });
+              }}
+            />
+            Allow this agent to request legal moves
           </label>
 
           <label className="grid gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
             System prompt
             <textarea
-              className="min-h-[120px] rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-3"
+              className="min-h-[120px] rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-3"
               value={draftSystemPrompt}
               disabled={disabled}
               onChange={(event) => setDraftSystemPrompt(event.target.value)}
@@ -2124,7 +2141,7 @@ function ConversationTraceCard({
   const showRack = Boolean(rack && rack.length > 0 && (event.kind === "reasoning" || event.kind === "provider_reply" || event.kind === "status"));
   const showFallbackStats = mode === "dev" && trace.turnCount > 0;
   return (
-    <div className={`min-w-0 overflow-hidden rounded-[22px] p-3 ${styles.card}`}>
+    <div className={`min-w-0 overflow-hidden rounded-lg p-3 ${styles.card}`}>
       <button className="grid min-w-0 w-full gap-3 text-left" onClick={onToggle}>
         <div className="min-w-0">
           <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
@@ -2157,7 +2174,7 @@ function ConversationTraceCard({
             {event.content || "(vide)"}
           </div>
           {showRack ? (
-            <div className="mt-3 rounded-[16px] bg-white dark:bg-slate-950 p-3">
+            <div className="mt-3 rounded-md bg-white dark:bg-slate-950 p-3">
               <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Rack</p>
               <SmallRack rack={rack ?? []} />
             </div>
@@ -2185,7 +2202,7 @@ function ChatRow({
     <div className={`flex gap-3 ${outgoing ? "flex-row" : "flex-row-reverse"}`}>
       <ModelLogo seat={seat} trace={trace} name={message.authorName} size="sm" borderless />
       <div
-        className={`max-w-[85%] rounded-[22px] px-4 py-3 shadow-sm ${
+        className={`max-w-[85%] rounded-lg px-4 py-3 shadow-sm ${
           outgoing ? "rounded-tl-none bg-indigo-600 text-white dark:bg-indigo-500" : "rounded-tr-none bg-white dark:bg-slate-950 text-slate-800 dark:text-slate-200"
         }`}
       >
@@ -2226,7 +2243,7 @@ function ModelLogo({
   const model = "agentConfig" in (seat ?? {}) ? seat?.agentConfig?.model : trace?.model;
   const provider = "agentConfig" in (seat ?? {}) ? seat?.agentConfig?.provider : trace?.provider;
   const resolvedName = seat?.name ?? trace?.playerName ?? name ?? "Agent";
-  const className = `${size === "lg" ? "h-12 w-12" : "h-10 w-10"} rounded-2xl bg-white p-1 object-contain shadow-sm ${borderless ? "" : "border border-slate-200 dark:border-slate-300"}`;
+  const className = `${size === "lg" ? "h-12 w-12" : "h-10 w-10"} rounded-xl bg-white p-1 object-contain shadow-sm ${borderless ? "" : "border border-slate-200 dark:border-slate-300"}`;
   if (resolvedName.trim().toLowerCase() === "system") {
     return <img src="/logos/system.png" alt="System" className={className} />;
   }
@@ -2259,7 +2276,7 @@ function LegalMoveCard({ move, onApply }: { move: LegalMove; onApply: () => void
 
   return (
     <button
-      className="grid gap-3 rounded-[24px] bg-white dark:bg-slate-900 p-4 text-left transition hover:-translate-y-0.5 hover:shadow-md"
+      className="grid gap-3 rounded-xl bg-white dark:bg-slate-900 p-4 text-left transition hover:-translate-y-0.5 hover:shadow-md"
       onClick={onApply}
     >
       <div className="flex items-start justify-between gap-3">
@@ -2272,7 +2289,7 @@ function LegalMoveCard({ move, onApply }: { move: LegalMove; onApply: () => void
         <span className="rounded-full bg-indigo-100 dark:bg-indigo-900/30 px-3 py-1 text-sm font-bold text-indigo-700 dark:text-indigo-400">{move.score}</span>
       </div>
       <div className="flex flex-wrap items-start gap-3">
-        <div className={`flex rounded-[18px] bg-slate-100 dark:bg-slate-800 p-2 ${isHorizontal ? "flex-row gap-1" : "flex-col gap-1"}`}>
+        <div className={`flex rounded-lg bg-slate-100 dark:bg-slate-800 p-2 ${isHorizontal ? "flex-row gap-1" : "flex-col gap-1"}`}>
           {orderedPlacements.map((placement) => (
             <div
               key={`${placement.row}-${placement.col}`}
@@ -2292,7 +2309,7 @@ function LegalMoveCard({ move, onApply }: { move: LegalMove; onApply: () => void
 }
 
 function InlineError({ message }: { message: string }) {
-  return <div className="rounded-2xl border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 px-4 py-3 text-sm font-medium text-red-700 dark:text-red-400">{message}</div>;
+  return <div className="rounded-xl border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 px-4 py-3 text-sm font-medium text-red-700 dark:text-red-400">{message}</div>;
 }
 
 function ensureSocketReady(
