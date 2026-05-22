@@ -884,7 +884,10 @@ function HomePage({
           <div className="grid gap-6 xl:grid-cols-[1.3fr_0.7fr]">
             <div>
               <p className="text-sm font-semibold uppercase tracking-[0.3em] text-indigo-500">Scrabble Webapp</p>
-              <h1 className="mt-2 text-5xl font-black tracking-[0.08em] text-slate-900 dark:text-white md:text-7xl">SCRABBLE CODEX</h1>
+              <div className="mt-2 flex items-center gap-3">
+                <img src="/scrabble_logo.png" alt="Scrabble Codex" className="h-14 w-14 md:h-20 md:w-20 rounded-2xl object-contain" />
+                <h1 className="text-5xl font-black tracking-[0.08em] text-slate-900 dark:text-white md:text-7xl">SCRABBLE CODEX</h1>
+              </div>
               <p className="mt-4 max-w-3xl text-lg leading-8 text-slate-600 dark:text-slate-300">
                 Shareable multiplayer rooms, spectator mode, AI agents, real-time chat, and authoritative server-side
                 orchestration.
@@ -914,7 +917,7 @@ function HomePage({
                     />
                   </label>
                   <div className="flex flex-wrap gap-3">
-                    <button className="rounded-2xl bg-indigo-600 px-5 py-3 font-semibold text-white" onClick={onCreate}>
+                    <button className="rounded-2xl bg-indigo-600 px-5 py-3 font-semibold text-white hover:bg-indigo-700 dark:hover:bg-indigo-500" onClick={onCreate}>
                       Create room
                     </button>
                     <button className="rounded-2xl bg-slate-200 dark:bg-slate-700 px-5 py-3 font-semibold text-slate-800 dark:text-slate-200 hover:bg-slate-300 dark:hover:bg-slate-600 transition" onClick={onJoin}>
@@ -944,14 +947,14 @@ function HomePage({
                   </label>
                   <div className="flex flex-wrap gap-3">
                     <button
-                      className="rounded-2xl bg-indigo-600 px-5 py-3 font-semibold text-white disabled:opacity-50"
+                      className="rounded-2xl bg-indigo-600 px-5 py-3 font-semibold text-white hover:bg-indigo-700 dark:hover:bg-indigo-500 disabled:opacity-50"
                       onClick={onLogin}
                       disabled={authLoading}
                     >
                       Sign in
                     </button>
                     <button
-                      className="rounded-2xl bg-slate-200 dark:bg-slate-700 px-5 py-3 font-semibold text-slate-800 dark:text-slate-200 disabled:opacity-50"
+                      className="rounded-2xl bg-slate-200 dark:bg-slate-700 px-5 py-3 font-semibold text-slate-800 dark:text-slate-200 hover:bg-slate-300 dark:hover:bg-slate-600 disabled:opacity-50"
                       onClick={onRegister}
                       disabled={authLoading}
                     >
@@ -1118,7 +1121,7 @@ function RoomPage(props: {
         <div className="grid max-w-xl gap-4 rounded-[28px] bg-white dark:bg-slate-900 p-8 text-center shadow-xl shadow-slate-200/80 dark:shadow-slate-900/50">
           <h1 className="text-3xl font-bold">Room not found</h1>
           <p className="text-slate-600 dark:text-slate-300">The room `{routeRoomId}` does not exist or is no longer available in memory.</p>
-          <button className="rounded-2xl bg-indigo-600 px-5 py-3 font-semibold text-white" onClick={() => window.location.assign("/")}>
+          <button className="rounded-2xl bg-indigo-600 px-5 py-3 font-semibold text-white hover:bg-indigo-700 dark:hover:bg-indigo-500" onClick={() => window.location.assign("/")}>
             Back to home
           </button>
         </div>
@@ -1137,6 +1140,7 @@ function RoomPage(props: {
           <div className="flex flex-wrap items-center gap-3">
             <p className="text-sm font-semibold uppercase tracking-[0.3em] text-indigo-500">Room {view.roomId}</p>
             <span className="text-slate-300 dark:text-slate-600">·</span>
+            <img src="/scrabble_logo.png" alt="Scrabble Codex" className="h-8 w-8 md:h-10 md:w-10 rounded-lg object-contain" />
             <h1 className="text-2xl md:text-3xl font-black tracking-[0.08em] text-slate-900 dark:text-white">SCRABBLE</h1>
             <span className="text-slate-300 dark:text-slate-600">·</span>
             <p className="text-sm text-slate-500 dark:text-slate-400">
@@ -1150,7 +1154,7 @@ function RoomPage(props: {
               {view.viewerRole === "player" ? "Player" : "Spectator"}
             </span>
             {view.status === "lobby" && view.viewerRole === "spectator" && activeHumanSeatAvailable ? (
-              <button className="rounded-2xl bg-indigo-600 px-4 py-3 font-semibold text-white" onClick={onJoinAsPlayer}>
+              <button className="rounded-2xl bg-indigo-600 px-4 py-3 font-semibold text-white hover:bg-indigo-700 dark:hover:bg-indigo-500" onClick={onJoinAsPlayer}>
                 Join as player
               </button>
             ) : null}
@@ -1159,7 +1163,7 @@ function RoomPage(props: {
       </header>
 
       <main
-        className={`grid gap-3 xl:grid-cols-[280px_minmax(0,0.92fr)_520px] ${
+        className={`grid gap-3 xl:grid-cols-[280px_minmax(0,1fr)_520px] ${
           view.status === "lobby" ? "items-start" : "min-h-0 flex-1"
         }`}
       >
@@ -1220,20 +1224,22 @@ function RoomPage(props: {
           )}
         </section>
 
-        <ConversationPanel
-          view={view}
-          mode={conversationMode}
-          onCycleMode={onCycleMode}
-          onPause={onPause}
-          isHost={isHost}
-          feedRef={feedRef}
-          items={conversationFeed}
-          expandedConversationId={expandedConversationId}
-          onToggleConversationItem={onToggleConversationItem}
-          chatDraft={chatDraft}
-          setChatDraft={setChatDraft}
-          onSendChat={onSendChat}
-        />
+        {view.status !== "lobby" && (
+          <ConversationPanel
+            view={view}
+            mode={conversationMode}
+            onCycleMode={onCycleMode}
+            onPause={onPause}
+            isHost={isHost}
+            feedRef={feedRef}
+            items={conversationFeed}
+            expandedConversationId={expandedConversationId}
+            onToggleConversationItem={onToggleConversationItem}
+            chatDraft={chatDraft}
+            setChatDraft={setChatDraft}
+            onSendChat={onSendChat}
+          />
+        )}
       </main>
     </div>
   );
@@ -1267,7 +1273,7 @@ function LobbyView({
           <p className="mt-2 text-slate-600 dark:text-slate-300">Spectators can watch this room live and send chat messages.</p>
         </div>
         {isHost ? (
-          <button className="rounded-2xl bg-indigo-600 px-5 py-3 font-semibold text-white" onClick={startGame}>
+          <button className="rounded-2xl bg-indigo-600 px-5 py-3 font-semibold text-white hover:bg-indigo-700 dark:hover:bg-indigo-500" onClick={startGame}>
             Start game
           </button>
         ) : null}
@@ -1369,21 +1375,21 @@ function GameView({
       </div>
       <div className="flex flex-wrap gap-2">
         <button
-          className="rounded-2xl bg-indigo-600 px-4 py-3 font-semibold text-white disabled:cursor-not-allowed disabled:bg-indigo-300"
+          className="rounded-2xl bg-indigo-600 px-4 py-3 font-semibold text-white hover:bg-indigo-700 dark:hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-indigo-300"
           onClick={submitMove}
           disabled={!myTurn || tentativePlacements.length === 0}
         >
           Play
         </button>
         <button
-          className="rounded-2xl bg-slate-200 dark:bg-slate-700 px-4 py-3 font-semibold text-slate-800 dark:text-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
+          className="rounded-2xl bg-slate-200 dark:bg-slate-700 px-4 py-3 font-semibold text-slate-800 dark:text-slate-200 hover:bg-slate-300 dark:hover:bg-slate-600 disabled:cursor-not-allowed disabled:opacity-50"
           onClick={clearDraftMove}
           disabled={tentativePlacements.length === 0}
         >
           Clear
         </button>
         <button
-          className="rounded-2xl bg-slate-200 dark:bg-slate-700 px-4 py-3 font-semibold text-slate-800 dark:text-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
+          className="rounded-2xl bg-slate-200 dark:bg-slate-700 px-4 py-3 font-semibold text-slate-800 dark:text-slate-200 hover:bg-slate-300 dark:hover:bg-slate-600 disabled:cursor-not-allowed disabled:opacity-50"
           onClick={passTurn}
           disabled={!myTurn}
         >
@@ -1440,7 +1446,7 @@ function GameView({
           <div className="flex flex-wrap gap-2">
             {showLegalMovesFeature ? (
               <button
-                className="rounded-2xl bg-white dark:bg-slate-900 px-4 py-3 font-semibold text-slate-800 dark:text-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-2xl bg-white dark:bg-slate-900 px-4 py-3 font-semibold text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
                 onClick={toggleLegalMovesPanel}
                 disabled={!myTurn}
               >
@@ -1448,7 +1454,7 @@ function GameView({
               </button>
             ) : null}
             <button
-              className="rounded-2xl bg-white dark:bg-slate-900 px-4 py-3 font-semibold text-slate-800 dark:text-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
+              className="rounded-2xl bg-white dark:bg-slate-900 px-4 py-3 font-semibold text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
               onClick={exchangeTiles}
               disabled={!myTurn || exchangeSelection.length === 0}
             >
@@ -1502,7 +1508,7 @@ function GameView({
               <h3 className="text-xl font-bold text-slate-900 dark:text-white">Legal moves</h3>
               <p className="text-sm text-slate-500 dark:text-slate-400">Compact grid. Click a card to prepare the move.</p>
             </div>
-            <button className="rounded-2xl bg-white dark:bg-slate-900 px-4 py-3 font-semibold text-slate-800 dark:text-slate-200" onClick={requestLegalMoves} disabled={!myTurn}>
+            <button className="rounded-2xl bg-white dark:bg-slate-900 px-4 py-3 font-semibold text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800" onClick={requestLegalMoves} disabled={!myTurn}>
               Refresh
             </button>
           </div>
@@ -1560,11 +1566,11 @@ function ConversationPanel({
           <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Chat</h2>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button className="rounded-2xl bg-slate-100 dark:bg-slate-900 px-4 py-3 text-sm font-semibold text-slate-700 dark:text-slate-200 dark:ring-1 dark:ring-white/8" onClick={onCycleMode}>
+          <button className="rounded-2xl bg-slate-100 dark:bg-slate-900 px-4 py-3 text-sm font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-800 dark:ring-1 dark:ring-white/8" onClick={onCycleMode}>
             Mode: {modeLabel(mode)}
           </button>
           <button
-            className="rounded-2xl bg-indigo-600 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-indigo-300"
+            className="rounded-2xl bg-indigo-600 px-4 py-3 text-sm font-semibold text-white hover:bg-indigo-700 dark:hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-indigo-300"
             onClick={onPause}
             disabled={!isHost || view.status === "lobby" || view.game.finished}
           >
@@ -1679,11 +1685,11 @@ function RoomCard({
         <span>{room.currentTurnPlayerName ? `To ${room.currentTurnPlayerName}` : "Waiting"}</span>
       </div>
       <div className="flex flex-wrap gap-2">
-        <button className="rounded-2xl bg-indigo-600 px-4 py-3 font-semibold text-white" onClick={onWatch}>
+        <button className="rounded-2xl bg-indigo-600 px-4 py-3 font-semibold text-white hover:bg-indigo-700 dark:hover:bg-indigo-500" onClick={onWatch}>
           Watch
         </button>
         {onDelete ? (
-          <button className="rounded-2xl bg-red-100 dark:bg-red-900/30 px-4 py-3 font-semibold text-red-700 dark:text-red-400" onClick={onDelete}>
+          <button className="rounded-2xl bg-red-100 dark:bg-red-900/30 px-4 py-3 font-semibold text-red-700 dark:text-red-400 hover:bg-red-200 dark:hover:bg-red-900/50" onClick={onDelete}>
             Delete
           </button>
         ) : null}
@@ -2227,7 +2233,7 @@ function ModelLogo({
   if (kind === "human") {
     return (
       <div className={`${className} flex items-center justify-center`}>
-        <svg viewBox="0 0 24 24" aria-hidden="true" className="h-full w-full text-slate-700 dark:text-slate-200">
+        <svg viewBox="0 0 24 24" aria-hidden="true" className="h-full w-full text-slate-700">
           <circle cx="12" cy="8" r="4" fill="currentColor" />
           <path
             d="M6 20c0-3.3137 2.6863-6 6-6s6 2.6863 6 6"
@@ -2426,7 +2432,7 @@ function getModelLogo({ model, provider, name }: { model?: string; provider?: Ag
   if (key.includes("deepseek")) return "/logos/deepseek_logo.png";
   if (key.includes("grok") || key.includes("xai")) return "/logos/grok_logo.png";
   if (key.includes("minimax")) return "/logos/minimax_logo.png";
-  return "/logos/z_ai_logo.png";
+  return "/logos/bot.jpg";
 }
 
 function getActiveTracePlayerId(traces: AgentTrace[]): string | null {
